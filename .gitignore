@@ -12,3 +12,6 @@ testdata/*.pprof
 
 # OS
 .DS_Store
+
+# internal agent log — never commit (repo will be public)
+HANDOFF.md

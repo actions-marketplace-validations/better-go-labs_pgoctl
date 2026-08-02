@@ -1,15 +1,19 @@
 name: Profile Collect
-# Spins up Prometheus in kind, drives load, captures a 30s CPU pprof,
-# validates it with pgoctl, and uploads as a workflow artifact.
-# Run manually (workflow_dispatch) to produce testdata/prometheus_cpu.pprof.
+# Spins up Prometheus in kind, drives load DURING the pprof capture window,
+# captures a 60s CPU pprof, validates it with pgoctl, and uploads as a
+# workflow artifact. Run manually (workflow_dispatch) to produce
+# testdata/prometheus_cpu.pprof.
+#
+# NOTE: workflow_dispatch only fires from the DEFAULT branch, so this
+# workflow goes live for dispatch only after it is merged to main.
 
 on:
   workflow_dispatch:
     inputs:
       duration:
-        description: 'Profile duration in seconds'
+        description: 'Profile duration in seconds (load overlaps capture)'
         required: false
-        default: '30'
+        default: '60'
 
 jobs:
   collect:
@@ -32,7 +36,12 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
 
-      - name: Deploy Prometheus with pprof enabled
+      # Prometheus exposes /debug/pprof BY DEFAULT (web.enable-pprof=true),
+      # so no additionalArgs are needed. We also disable grafana and
+      # alertmanager: the profile is captured from the prometheus server
+      # itself, and trimming the stack reduces OOM risk on the 2-core/7GB
+      # Actions runner.
+      - name: Deploy Prometheus (pprof on by default)
         run: |
           helm repo add prometheus-community \
             https://prometheus-community.github.io/helm-charts
@@ -41,30 +50,92 @@ jobs:
           helm upgrade --install prometheus \
             prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
-            --set 'prometheus.prometheusSpec.additionalArgs[0].name=web.enable-pprof' \
-            --set 'prometheus.prometheusSpec.additionalArgs[0].value=' \
+            --set grafana.enabled=false \
+            --set alertmanager.enabled=false \
             --wait --timeout 5m
+
+      # Real readiness gate before port-forward: `helm --wait` only proves
+      # the deployment was Ready at install time, not that the prometheus
+      # container is still serving when we connect.
+      - name: Wait for Prometheus pod Ready
+        run: |
+          kubectl wait \
+            --for=condition=Ready \
+            pod \
+            -n monitoring \
+            -l app.kubernetes.io/name=prometheus \
+            --timeout=300s
+
+      - name: Dump diagnostics (only if readiness wait failed)
+        if: failure()
+        run: |
+          echo "::group::All monitoring pods"
+          kubectl get pods -n monitoring -o wide || true
+          echo "::endgroup::"
+          echo "::group::Prometheus pod describe"
+          kubectl describe pod -n monitoring \
+            -l app.kubernetes.io/name=prometheus || true
+          echo "::endgroup::"
+          echo "::group::Prometheus pod logs"
+          kubectl logs -n monitoring \
+            -l app.kubernetes.io/name=prometheus --tail=200 || true
+          echo "::endgroup::"
 
       - name: Port-forward Prometheus
         run: |
           kubectl port-forward -n monitoring \
             svc/prometheus-kube-prometheus-prometheus 9090:9090 &
-          # wait for port-forward to be ready
-          timeout 30 bash -c 'until curl -sf http://localhost:9090/-/ready; do sleep 1; done'
+          # wait for port-forward to be ready (retry transient conn refused)
+          timeout 60 bash -c \
+            'until curl -sf --retry 5 --retry-connrefused http://localhost:9090/-/ready; do sleep 2; done'
 
-      - name: Drive load (60s)
+      # Load must overlap the capture window: a profile of an idle server is
+      # a meaningless PGO baseline. hey runs 75s in the background while the
+      # 60s capture happens, so the server is hammered for the whole window.
+      - name: Drive load during capture
         run: |
           go install github.com/rakyll/hey@latest
-          hey -z 60s -c 20 \
-            'http://localhost:9090/api/v1/query?query=up' || true
+          nohup hey -z 75s -c 20 \
+            'http://localhost:9090/api/v1/query?query=up' \
+            > /tmp/hey.log 2>&1 &
+          echo "hey started in background (pid $!)"
 
-      - name: Collect CPU profile
+      # Capture with retry: baseline itself fails loudly on truncated reads,
+      # failed validation, or sample count < 1000 (never saves a thin profile).
+      - name: Collect CPU profile (retry once)
         run: |
+          DUR=${{ github.event.inputs.duration || 60 }}
           mkdir -p testdata
-          go run ./cmd/baseline \
-            --url http://localhost:9090/debug/pprof/profile \
-            --seconds ${{ github.event.inputs.duration || 30 }} \
-            --out testdata/prometheus_cpu.pprof
+          for attempt in 1 2; do
+            echo "--- capture attempt $attempt (${DUR}s) ---"
+            if go run ./cmd/baseline \
+              --url http://localhost:9090/debug/pprof/profile \
+              --seconds "$DUR" \
+              --min-samples 1000 \
+              --out testdata/prometheus_cpu.pprof; then
+              echo "capture OK on attempt $attempt"
+              break
+            fi
+            echo "capture failed on attempt $attempt"
+            if [ "$attempt" -eq 2 ]; then
+              echo "::error::CPU profile capture failed after 2 attempts"
+              exit 1
+            fi
+            echo "waiting 15s before retry..."
+            sleep 15
+          done
+
+      - name: Stop load
+        run: |
+          pkill -f 'hey -z' || true
+          wait || true
+
+      - name: Report sample count
+        run: |
+          SAMPLES=$(go run ./cmd/pgoctl validate \
+            --min-samples 1000 --json testdata/prometheus_cpu.pprof \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['samples'])" 2>/dev/null || echo 0)
+          echo "captured profile samples: ${SAMPLES}"
 
       - name: Validate profile with pgoctl
         run: |
@@ -87,7 +158,7 @@ jobs:
           echo "## Profile Collect
           - Profile: \`testdata/prometheus_cpu.pprof\`
           - Size: ${SIZE} bytes
-          - Duration: ${{ github.event.inputs.duration || 30 }}s
+          - Duration: ${{ github.event.inputs.duration || 60 }}s
 
           Download artifact **prometheus-pprof-${{ github.run_id }}** and commit to \`testdata/\` to enable pgo-bench." \
           >> $GITHUB_STEP_SUMMARY

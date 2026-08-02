@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"text/tabwriter"
+	"time"
 
+	"github.com/Better-Go-Labs/pgoctl/internal/compare"
+	"github.com/Better-Go-Labs/pgoctl/internal/merge"
 	profiletypes "github.com/Better-Go-Labs/pgoctl/internal/profile"
 	"github.com/Better-Go-Labs/pgoctl/internal/validate"
+	"github.com/google/pprof/profile"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +30,8 @@ func main() {
 	}
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "JSON output")
 	root.AddCommand(newValidateCmd())
+	root.AddCommand(newMergeCmd())
+	root.AddCommand(newCompareCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(3)
@@ -87,6 +94,151 @@ func newValidateCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&weightCoverage, "weight-coverage", 0.20, "coverage score weight")
 	cmd.Flags().Float64Var(&weightDepth, "weight-depth", 0.10, "depth score weight")
 	cmd.Flags().Float64Var(&richnessFactor, "richness-factor", 0.02, "richness scaling factor")
+	return cmd
+}
+
+func newMergeCmd() *cobra.Command {
+	var strategy string
+	var recencyWeight float64
+	var halfLifeH float64
+	var dropInvalid bool
+	var out string
+
+	cmd := &cobra.Command{
+		Use:   "merge <profile...>",
+		Short: "Merge validated CPU profiles into a default.pgo artifact",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts := merge.Options{
+				Strategy:      merge.Strategy(strategy),
+				RecencyWeight: recencyWeight,
+				HalfLife:      time.Duration(halfLifeH * float64(time.Hour)),
+				DropInvalid:   dropInvalid,
+			}
+
+			inputs := make([]merge.Input, len(args))
+			for i, path := range args {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: read %s: %s\n", path, err)
+					os.Exit(2)
+				}
+				// Capture time comes from the profile itself (p.TimeNanos), not time.Now().
+				p, err := profile.ParseData(data)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: parse %s: %s\n", path, err)
+					os.Exit(2)
+				}
+				inputs[i] = merge.Input{Data: data, CapturedAt: time.Unix(0, p.TimeNanos)}
+			}
+
+			var buf bytes.Buffer
+			if err := merge.Profiles(inputs, opts, &buf); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %s\n", err)
+				os.Exit(1)
+			}
+
+			var dst *os.File
+			if out == "-" {
+				dst = os.Stdout
+			} else {
+				f, err := os.Create(out)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: create %s: %s\n", out, err)
+					os.Exit(2)
+				}
+				defer f.Close()
+				dst = f
+			}
+			if _, err := dst.Write(buf.Bytes()); err != nil {
+				fmt.Fprintf(os.Stderr, "error: write: %s\n", err)
+				os.Exit(2)
+			}
+			if out != "-" {
+				fmt.Fprintf(os.Stderr, "merged %d profile(s) → %s (%d bytes)\n",
+					len(args), out, buf.Len())
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&strategy, "strategy", "weighted", "merge strategy: weighted|latest|union")
+	cmd.Flags().Float64Var(&recencyWeight, "recency-weight", 2.0, "multiplier for most recent profile")
+	cmd.Flags().Float64Var(&halfLifeH, "half-life", 24.0, "recency decay half-life in hours")
+	cmd.Flags().BoolVar(&dropInvalid, "drop-invalid", false, "skip unparseable profiles instead of failing")
+	cmd.Flags().StringVar(&out, "out", "default.pgo", "output path (- for stdout)")
+	return cmd
+}
+
+func newCompareCmd() *cobra.Command {
+	var minImprovement float64
+	var minRegression float64
+	var minCPUPercent float64
+	var topN int
+
+	cmd := &cobra.Command{
+		Use:   "compare <baseline.pprof> <candidate.pprof>",
+		Short: "Compare two CPU profiles and emit a gate verdict",
+		Long: `Compare two pprof files by CPU function attribution.
+
+SummaryCPUDelta = sum over all functions of: basePct * (basePct-candPct)/100
+Positive delta = candidate uses less CPU overall.
+
+Verdict:
+  promote  — delta >= --min-improvement
+  rollback — delta <= -(--min-regression) (independent regression threshold)
+  neutral  — within both thresholds
+
+--min-cpu-percent drops functions whose CPU share is below the given %% in
+BOTH profiles before comparing (default 0 = no filtering).`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			gate := compare.GateConfig{
+				MinCPUImprovement: minImprovement,
+				MinCPURegression:  minRegression,
+				MinCPUPercent:     minCPUPercent,
+				TopN:              topN,
+			}
+			rpt, err := compare.ProfileFiles(args[0], args[1], gate)
+			if err != nil {
+				if jsonOutput {
+					json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
+				} else {
+					fmt.Fprintf(os.Stderr, "error: %s\n", err)
+				}
+				os.Exit(2)
+			}
+			if jsonOutput {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				enc.Encode(rpt)
+			} else {
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintf(w, "verdict\t%s\n", rpt.Verdict)
+				fmt.Fprintf(w, "cpu_delta_pct\t%.2f\n", rpt.SummaryCPUDelta)
+				fmt.Fprintf(w, "baseline_samples\t%d\n", rpt.BaselineSamples)
+				fmt.Fprintf(w, "candidate_samples\t%d\n", rpt.CandidateSamples)
+				if rpt.FilteredFunctions > 0 {
+					fmt.Fprintf(w, "filtered_functions\t%d\n", rpt.FilteredFunctions)
+				}
+				if len(rpt.TopDeltas) > 0 {
+					fmt.Fprintf(w, "\nfunction\tbase%%\tcand%%\tdelta%%\n")
+					for _, d := range rpt.TopDeltas {
+						fmt.Fprintf(w, "%s\t%.1f\t%.1f\t%+.1f\n",
+							d.Function, d.BasePct, d.CandPct, d.DeltaPct)
+					}
+				}
+				w.Flush()
+			}
+			if rpt.Verdict == compare.Rollback {
+				os.Exit(1)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Float64Var(&minImprovement, "min-improvement", 3.0, "min CPU delta %% to promote")
+	cmd.Flags().Float64Var(&minRegression, "min-regression", 3.0, "min CPU regression %% to rollback (independent of --min-improvement)")
+	cmd.Flags().Float64Var(&minCPUPercent, "min-cpu-percent", 0.0, "drop functions below this CPU %% share in both profiles (0 = no filtering)")
+	cmd.Flags().IntVar(&topN, "top", 10, "number of function deltas to show")
 	return cmd
 }
 

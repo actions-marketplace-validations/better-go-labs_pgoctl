@@ -28,16 +28,18 @@ type FunctionDelta struct {
 
 // Report is the full output of pgoctl compare.
 type Report struct {
-	BaselineSamples  int64           `json:"baseline_samples"`
-	CandidateSamples int64           `json:"candidate_samples"`
-	TopDeltas        []FunctionDelta `json:"top_deltas"`
-	SummaryCPUDelta  float64         `json:"summary_cpu_delta_pct"` // positive = improvement
-	Verdict          Verdict         `json:"verdict"`
+	BaselineSamples   int64           `json:"baseline_samples"`
+	CandidateSamples  int64           `json:"candidate_samples"`
+	TopDeltas         []FunctionDelta `json:"top_deltas"`
+	SummaryCPUDelta   float64         `json:"summary_cpu_delta_pct"` // positive = improvement
+	FilteredFunctions int64           `json:"filtered_functions"`    // dropped by MinCPUPercent filter
+	Verdict           Verdict         `json:"verdict"`
 }
 
 // GateConfig holds the thresholds used to decide the verdict.
 type GateConfig struct {
 	MinCPUImprovement float64 // percentage points required for Promote
+	MinCPUPercent     float64 // drop functions below this CPU %% share in BOTH profiles (<= 0 disables)
 	TopN              int     // number of function deltas to include in output
 }
 
@@ -86,9 +88,18 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 
 	deltas := make([]FunctionDelta, 0, len(seen))
 	summary := 0.0
+	var filtered int64
 	for fn := range seen {
 		b := basePct[fn]
 		c := candPct[fn]
+		// Optional noise filter: skip functions whose CPU share is below
+		// MinCPUPercent in BOTH profiles. A function that is hot in either
+		// profile is kept, so large shifts (hot → cold / cold → hot) still
+		// surface. Default (MinCPUPercent <= 0) disables filtering.
+		if gate.MinCPUPercent > 0 && b < gate.MinCPUPercent && c < gate.MinCPUPercent {
+			filtered++
+			continue
+		}
 		d := b - c // positive = candidate spent less CPU here
 		deltas = append(deltas, FunctionDelta{
 			Function: fn,
@@ -108,6 +119,11 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 		top = len(deltas)
 	}
 
+	// SummaryCPUDelta is signed: positive = the candidate spends LESS CPU
+	// overall (improvement), negative = it spends MORE (regression). The
+	// rollback gate is therefore the mirror image of the promote gate — a
+	// regression of the same magnitude as the improvement threshold
+	// (summary <= -MinCPUImprovement) fails the gate.
 	v := Neutral
 	switch {
 	case summary >= gate.MinCPUImprovement:
@@ -117,11 +133,12 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 	}
 
 	return &Report{
-		BaselineSamples:  int64(len(base.Sample)),
-		CandidateSamples: int64(len(cand.Sample)),
-		TopDeltas:        deltas[:top],
-		SummaryCPUDelta:  math.Round(summary*100) / 100,
-		Verdict:          v,
+		BaselineSamples:   int64(len(base.Sample)),
+		CandidateSamples:  int64(len(cand.Sample)),
+		TopDeltas:         deltas[:top],
+		SummaryCPUDelta:   math.Round(summary*100) / 100,
+		FilteredFunctions: filtered,
+		Verdict:           v,
 	}
 }
 

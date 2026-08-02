@@ -13,19 +13,19 @@ import (
 func buildProfile(t *testing.T, sampleCount int, durationNanos int64) []byte {
 	t.Helper()
 	fn := &profile.Function{ID: 1, Name: "main.hotPath", SystemName: "main.hotPath"}
-	loc := &profile.Location{
-		ID:   1,
-		Line: []profile.Line{{Function: fn, Line: 1}},
-	}
 	p := &profile.Profile{
 		SampleType:    []*profile.ValueType{{Type: "cpu", Unit: "nanoseconds"}},
 		PeriodType:    &profile.ValueType{Type: "cpu", Unit: "nanoseconds"},
 		Period:        10000000,
 		DurationNanos: durationNanos,
 		Function:      []*profile.Function{fn},
-		Location:      []*profile.Location{loc},
 	}
 	for i := 0; i < sampleCount; i++ {
+		loc := &profile.Location{
+			ID:   uint64(i + 1),
+			Line: []profile.Line{{Function: fn, Line: int64(i + 1)}},
+		}
+		p.Location = append(p.Location, loc)
 		p.Sample = append(p.Sample, &profile.Sample{
 			Location: []*profile.Location{loc},
 			Value:    []int64{10000000},

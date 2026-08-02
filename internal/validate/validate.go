@@ -5,9 +5,9 @@ import (
 	"math"
 	"os"
 
-	"github.com/google/pprof/profile"
-	profiletypes "github.com/Better-Go-Labs/pgoctl/internal/profile"
 	"github.com/Better-Go-Labs/pgoctl/internal/errors"
+	profiletypes "github.com/Better-Go-Labs/pgoctl/internal/profile"
+	"github.com/google/pprof/profile"
 )
 
 const (
@@ -16,26 +16,26 @@ const (
 )
 
 type Options struct {
-	MinSamples     int64
-	MinDuration    float64 // seconds
-	MinScore       float64
-	TargetSamples  int64
-	TargetDuration float64 // seconds
-	MinStackDepth  float64
+	MinSamples         int64
+	MinDurationSeconds float64 // seconds
+	MinScore           float64
+	TargetSamples      int64
+	TargetDuration     float64 // seconds
+	MinStackDepth      float64
 }
 
 func DefaultOptions() Options {
 	return Options{
-		MinSamples:     10000,
-		MinDuration:    10.0,
-		MinScore:       0.6,
-		TargetSamples:  targetSamples,
-		TargetDuration: targetDurationSeconds,
-		MinStackDepth:  2.0,
+		MinSamples:         10000,
+		MinDurationSeconds: 10.0,
+		MinScore:           0.6,
+		TargetSamples:      targetSamples,
+		TargetDuration:     targetDurationSeconds,
+		MinStackDepth:      2.0,
 	}
 }
 
-func clamp01(v float64) float64 {
+func clamp(v float64) float64 {
 	return math.Max(0, math.Min(1, v))
 }
 
@@ -112,16 +112,16 @@ func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error
 	if sampleCount < opts.MinSamples {
 		report.Errors = append(report.Errors, fmt.Sprintf("insufficient samples: %d < %d", sampleCount, opts.MinSamples))
 	}
-	if durationSec < int64(opts.MinDuration) {
-		report.Warnings = append(report.Warnings, fmt.Sprintf("profile too short: %ds < %.0fs", durationSec, opts.MinDuration))
+	if durationSec < int64(opts.MinDurationSeconds) {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("profile too short: %ds < %.0fs", durationSec, opts.MinDurationSeconds))
 	}
 	if avgStackDepth < opts.MinStackDepth {
-		report.Errors = append(report.Errors, fmt.Sprintf("flat/cold profile: avg stack depth < %.1f", opts.MinStackDepth))
+		report.Errors = append(report.Errors, fmt.Sprintf(errors.ErrFlatProfile, opts.MinStackDepth))
 	}
 
-	density := clamp01(float64(sampleCount) / float64(opts.TargetSamples))
-	richness := clamp01(float64(uniqueStacks) / (0.02*float64(sampleCount) + 1))
-	coverage := clamp01(float64(durationSec) / opts.TargetDuration)
+	density := clamp(float64(sampleCount) / float64(opts.TargetSamples))
+	richness := clamp(float64(uniqueStacks) / (0.02*float64(sampleCount) + 1))
+	coverage := clamp(float64(durationSec) / opts.TargetDuration)
 	var depthOK float64
 	if avgStackDepth >= opts.MinStackDepth {
 		depthOK = 1.0

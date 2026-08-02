@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Better-Go-Labs/pgoctl/internal/validate"
 	profiletypes "github.com/Better-Go-Labs/pgoctl/internal/profile"
+	"github.com/Better-Go-Labs/pgoctl/internal/validate"
 )
 
 func generateCPUProfile(t *testing.T, durationMs int) []byte {

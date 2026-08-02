@@ -6,9 +6,9 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/spf13/cobra"
-	"github.com/Better-Go-Labs/pgoctl/internal/validate"
 	profiletypes "github.com/Better-Go-Labs/pgoctl/internal/profile"
+	"github.com/Better-Go-Labs/pgoctl/internal/validate"
+	"github.com/spf13/cobra"
 )
 
 const version = "0.0.1-wip"
@@ -45,12 +45,12 @@ func newValidateCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := validate.Options{
-				MinSamples:     minSamples,
-				MinDuration:    minDuration,
-				MinScore:       minScore,
-				TargetSamples:  targetSamples,
-				TargetDuration: targetDuration,
-				MinStackDepth:  minStackDepth,
+				MinSamples:         minSamples,
+				MinDurationSeconds: minDuration,
+				MinScore:           minScore,
+				TargetSamples:      targetSamples,
+				TargetDuration:     targetDuration,
+				MinStackDepth:      minStackDepth,
 			}
 			report, err := validate.ValidateFile(args[0], opts)
 			if err != nil {

@@ -1,0 +1,93 @@
+name: Profile Collect
+# Spins up Prometheus in kind, drives load, captures a 30s CPU pprof,
+# validates it with pgoctl, and uploads as a workflow artifact.
+# Run manually (workflow_dispatch) to produce testdata/prometheus_cpu.pprof.
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Profile duration in seconds'
+        required: false
+        default: '30'
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: pgoctl-dev
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Deploy Prometheus with pprof enabled
+        run: |
+          helm repo add prometheus-community \
+            https://prometheus-community.github.io/helm-charts
+          helm repo update
+          kubectl create namespace monitoring
+          helm upgrade --install prometheus \
+            prometheus-community/kube-prometheus-stack \
+            --namespace monitoring \
+            --set 'prometheus.prometheusSpec.additionalArgs[0].name=web.enable-pprof' \
+            --set 'prometheus.prometheusSpec.additionalArgs[0].value=' \
+            --wait --timeout 5m
+
+      - name: Port-forward Prometheus
+        run: |
+          kubectl port-forward -n monitoring \
+            svc/prometheus-kube-prometheus-prometheus 9090:9090 &
+          # wait for port-forward to be ready
+          timeout 30 bash -c 'until curl -sf http://localhost:9090/-/ready; do sleep 1; done'
+
+      - name: Drive load (60s)
+        run: |
+          go install github.com/rakyll/hey@latest
+          hey -z 60s -c 20 \
+            'http://localhost:9090/api/v1/query?query=up' || true
+
+      - name: Collect CPU profile
+        run: |
+          mkdir -p testdata
+          go run ./cmd/baseline \
+            --url http://localhost:9090/debug/pprof/profile \
+            --seconds ${{ github.event.inputs.duration || 30 }} \
+            --out testdata/prometheus_cpu.pprof
+
+      - name: Validate profile with pgoctl
+        run: |
+          go run ./cmd/pgoctl validate \
+            --min-samples 1000 \
+            --min-score 0.3 \
+            --json \
+            testdata/prometheus_cpu.pprof
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prometheus-pprof-${{ github.run_id }}
+          path: testdata/prometheus_cpu.pprof
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          SIZE=$(wc -c < testdata/prometheus_cpu.pprof)
+          echo "## Profile Collect
+          - Profile: \`testdata/prometheus_cpu.pprof\`
+          - Size: ${SIZE} bytes
+          - Duration: ${{ github.event.inputs.duration || 30 }}s
+
+          Download artifact **prometheus-pprof-${{ github.run_id }}** and commit to \`testdata/\` to enable pgo-bench." \
+          >> $GITHUB_STEP_SUMMARY

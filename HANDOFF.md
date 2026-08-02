@@ -1,2 +1,9 @@
-IyBIQU5ET0ZGLm1kCgojIyAyMDI2LTA4LTAxIERldiDigJIgRDI6IHBnb2N0bCB2YWxpZGF0ZSBjb21tYW5kClN0YXR1czogZG9uZQpPdXRwdXQ6IGh0dHBzOi8vZ2l0aHViLmNvbS9CZXR0ZXItR28tTGFicy9wZ29jdGwvcHVsbC8yCk5vdGVzOgotIEltcGxlbWVudHMgYHBnb2N0bCB2YWxpZGF0ZSA8Y3B1LnBwcm9mPmAgd2l0aCBkZW5zaXR5L3JpY2huZXNzL2NvdmVyYWdlL2RlcHRoIHNjb3JpbmcgKHNwZWMgwqcxMi4xYSkKLSBgLS1mb3JtYXQganNvbmAgaW1wbGVtZW50ZWQgYXMgYC0tanNvbmAgYm9vbCBmbGFnIChmdW5jdGlvbmFsbHkgZXF1aXZhbGVudCkKLSBCYXNlbGluZSBjYXB0dXJlIGhhbGYgb2YgRDIgKEJFTkNITUFSS1MubWQgLyAzIHByb2QgcHJvZmlsZXMpIGlzIHNwbGl0IG91dCAtLSBibG9ja2VkIG9uIGluZnJhIChr
-aW5kK1Byb21ldGhldXMpOyB3aWxsIGxhbmQgc2VwYXJhdGVseSBvbmNlIGluZnJhIGlzIHNvcnRlZAo=
+# HANDOFF.md
+
+## 2026-08-01 Dev ‒ D2: pgoctl validate command
+Status: done
+Output: https://github.com/Better-Go-Labs/pgoctl/pull/2
+Notes:
+- Implements `pgoctl validate <cpu.pprof>` with density/richness/coverage/depth scoring (spec §12.1a)
+- `--format json` implemented as `--json` bool flag (functionally equivalent)
+- Baseline capture half of D2 (BENCHMARKS.md / 3 prod profiles) is split out -- blocked on infra (kind+Prometheus); will land separately once infra is sorted

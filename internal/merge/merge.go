@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"time"
 
 	"github.com/google/pprof/profile"
@@ -33,10 +32,20 @@ func DefaultOptions() Options {
 	}
 }
 
-// Input is a single pprof profile with its capture timestamp.
+// Input is a single pprof profile. CapturedAt is only used as a fallback when
+// the profile itself carries no timestamp (p.TimeNanos == 0).
 type Input struct {
 	Data       []byte
 	CapturedAt time.Time
+}
+
+// captureTime returns the profile's own capture time when present, falling
+// back to the caller-provided timestamp otherwise.
+func captureTime(p *profile.Profile, fallback time.Time) time.Time {
+	if p.TimeNanos != 0 {
+		return time.Unix(0, p.TimeNanos)
+	}
+	return fallback
 }
 
 // Profiles merges the given pprof inputs according to opts and writes the
@@ -57,7 +66,7 @@ func Profiles(inputs []Input, opts Options, w io.Writer) error {
 			return fmt.Errorf("input %d: parse: %w", i, err)
 		}
 		profiles = append(profiles, p)
-		times = append(times, inp.CapturedAt)
+		times = append(times, captureTime(p, inp.CapturedAt))
 	}
 	if len(profiles) == 0 {
 		return fmt.Errorf("no valid profiles after parsing")
@@ -74,9 +83,14 @@ func Profiles(inputs []Input, opts Options, w io.Writer) error {
 		profiles = []*profile.Profile{profiles[newest]}
 
 	case Union:
-		// merge with equal weights — no scaling
+		// Equal weight for every profile: merge all at their native scale.
+		for _, p := range profiles {
+			p.Scale(1.0)
+		}
 
 	case Weighted:
+		// Exponential decay (weight = RecencyWeight * 0.5^(age/HalfLife)) so
+		// that recent profiles dominate while older ones still contribute.
 		applyWeights(profiles, times, opts)
 
 	default:
@@ -88,23 +102,6 @@ func Profiles(inputs []Input, opts Options, w io.Writer) error {
 		return fmt.Errorf("profile.Merge: %w", err)
 	}
 	return merged.Write(w)
-}
-
-// Files is a convenience wrapper that reads pprof files from disk.
-func Files(paths []string, capturedAts []time.Time, opts Options, w io.Writer) error {
-	inputs := make([]Input, len(paths))
-	for i, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-		t := time.Now()
-		if i < len(capturedAts) {
-			t = capturedAts[i]
-		}
-		inputs[i] = Input{Data: data, CapturedAt: t}
-	}
-	return Profiles(inputs, opts, w)
 }
 
 // applyWeights scales each profile by an exponential recency weight before merge.

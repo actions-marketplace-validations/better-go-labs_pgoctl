@@ -12,6 +12,7 @@ import (
 	"github.com/Better-Go-Labs/pgoctl/internal/merge"
 	profiletypes "github.com/Better-Go-Labs/pgoctl/internal/profile"
 	"github.com/Better-Go-Labs/pgoctl/internal/validate"
+	"github.com/google/pprof/profile"
 	"github.com/spf13/cobra"
 )
 
@@ -122,7 +123,13 @@ func newMergeCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "error: read %s: %s\n", path, err)
 					os.Exit(2)
 				}
-				inputs[i] = merge.Input{Data: data, CapturedAt: time.Now()}
+				// Capture time comes from the profile itself (p.TimeNanos), not time.Now().
+				p, err := profile.ParseData(data)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: parse %s: %s\n", path, err)
+					os.Exit(2)
+				}
+				inputs[i] = merge.Input{Data: data, CapturedAt: time.Unix(0, p.TimeNanos)}
 			}
 
 			var buf bytes.Buffer

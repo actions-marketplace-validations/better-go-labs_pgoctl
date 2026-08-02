@@ -39,12 +39,13 @@ type Report struct {
 // GateConfig holds the thresholds used to decide the verdict.
 type GateConfig struct {
 	MinCPUImprovement float64 // percentage points required for Promote
+	MinCPURegression  float64 // percentage points of regression required for Rollback (independent of MinCPUImprovement)
 	MinCPUPercent     float64 // drop functions below this CPU %% share in BOTH profiles (<= 0 disables)
 	TopN              int     // number of function deltas to include in output
 }
 
 func DefaultGateConfig() GateConfig {
-	return GateConfig{MinCPUImprovement: 3.0, TopN: 10}
+	return GateConfig{MinCPUImprovement: 3.0, MinCPURegression: 3.0, TopN: 10}
 }
 
 // ProfileFiles loads two pprof files and compares CPU function attribution.
@@ -121,14 +122,13 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 
 	// SummaryCPUDelta is signed: positive = the candidate spends LESS CPU
 	// overall (improvement), negative = it spends MORE (regression). The
-	// rollback gate is therefore the mirror image of the promote gate — a
-	// regression of the same magnitude as the improvement threshold
-	// (summary <= -MinCPUImprovement) fails the gate.
+	// rollback gate uses its own dedicated threshold (MinCPURegression) so
+	// the two gates can be tuned independently.
 	v := Neutral
 	switch {
 	case summary >= gate.MinCPUImprovement:
 		v = Promote
-	case summary <= -gate.MinCPUImprovement:
+	case summary <= -gate.MinCPURegression:
 		v = Rollback
 	}
 

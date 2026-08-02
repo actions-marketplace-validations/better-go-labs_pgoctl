@@ -184,3 +184,37 @@ func TestCompare_NoFilterByDefault(t *testing.T) {
 		t.Errorf("expected summary delta 3.7 without filter, got %.2f", rpt.SummaryCPUDelta)
 	}
 }
+
+// TestCompare_IndependentRollbackThreshold verifies that the rollback gate
+// uses its own MinCPURegression threshold instead of mirroring
+// MinCPUImprovement, so the two can be tuned independently.
+func TestCompare_IndependentRollbackThreshold(t *testing.T) {
+	// hotFn regresses from 90% to 100% of CPU → summary = -8.0.
+	// That is below the default -3.0 rollback threshold, so the default
+	// config must roll back…
+	base := buildTwoFnProfile(t, "main.hotFn", "main.otherFn", 900, 100)
+	cand := buildTwoFnProfile(t, "main.hotFn", "main.otherFn", 1000, 0)
+
+	def, err := compare.Profiles(base, cand, compare.DefaultGateConfig())
+	if err != nil {
+		t.Fatalf("compare (default): %v", err)
+	}
+	if math.Abs(def.SummaryCPUDelta+8.0) > 0.01 {
+		t.Fatalf("expected delta -8.0, got %.2f", def.SummaryCPUDelta)
+	}
+	if def.Verdict != compare.Rollback {
+		t.Errorf("expected Rollback at default threshold, got %s", def.Verdict)
+	}
+
+	// …but a lax rollback threshold (10.0) must NOT roll back, even though
+	// the improvement threshold is unchanged: the gates are independent.
+	gate := compare.DefaultGateConfig()
+	gate.MinCPURegression = 10.0
+	rpt, err := compare.Profiles(base, cand, gate)
+	if err != nil {
+		t.Fatalf("compare (custom rollback): %v", err)
+	}
+	if rpt.Verdict != compare.Neutral {
+		t.Errorf("expected Neutral with MinCPURegression=10, got %s", rpt.Verdict)
+	}
+}

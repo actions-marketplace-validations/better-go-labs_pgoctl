@@ -171,6 +171,7 @@ func newMergeCmd() *cobra.Command {
 
 func newCompareCmd() *cobra.Command {
 	var minImprovement float64
+	var minRegression float64
 	var minCPUPercent float64
 	var topN int
 
@@ -184,8 +185,8 @@ Positive delta = candidate uses less CPU overall.
 
 Verdict:
   promote  — delta >= --min-improvement
-  rollback — delta <= -(--min-improvement) (regression)
-  neutral  — within threshold
+  rollback — delta <= -(--min-regression) (independent regression threshold)
+  neutral  — within both thresholds
 
 --min-cpu-percent drops functions whose CPU share is below the given %% in
 BOTH profiles before comparing (default 0 = no filtering).`,
@@ -193,6 +194,7 @@ BOTH profiles before comparing (default 0 = no filtering).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			gate := compare.GateConfig{
 				MinCPUImprovement: minImprovement,
+				MinCPURegression:  minRegression,
 				MinCPUPercent:     minCPUPercent,
 				TopN:              topN,
 			}
@@ -233,7 +235,8 @@ BOTH profiles before comparing (default 0 = no filtering).`,
 			return nil
 		},
 	}
-	cmd.Flags().Float64Var(&minImprovement, "min-improvement", 3.0, "min CPU delta %% to promote (same magnitude triggers rollback)")
+	cmd.Flags().Float64Var(&minImprovement, "min-improvement", 3.0, "min CPU delta %% to promote")
+	cmd.Flags().Float64Var(&minRegression, "min-regression", 3.0, "min CPU regression %% to rollback (independent of --min-improvement)")
 	cmd.Flags().Float64Var(&minCPUPercent, "min-cpu-percent", 0.0, "drop functions below this CPU %% share in both profiles (0 = no filtering)")
 	cmd.Flags().IntVar(&topN, "top", 10, "number of function deltas to show")
 	return cmd

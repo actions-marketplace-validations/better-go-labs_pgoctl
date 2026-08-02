@@ -7,21 +7,32 @@ import (
 
 	"github.com/google/pprof/profile"
 	profiletypes "github.com/Better-Go-Labs/pgoctl/internal/profile"
+	"github.com/Better-Go-Labs/pgoctl/internal/errors"
 )
 
 const (
-	targetSamples  = 50000
-	targetDuration = 30.0 // seconds
+	targetSamples         = 50000
+	targetDurationSeconds = 30.0 // seconds
 )
 
 type Options struct {
-	MinSamples  int64
-	MinDuration float64 // seconds
-	MinScore    float64
+	MinSamples     int64
+	MinDuration    float64 // seconds
+	MinScore       float64
+	TargetSamples  int64
+	TargetDuration float64 // seconds
+	MinStackDepth  float64
 }
 
 func DefaultOptions() Options {
-	return Options{MinSamples: 10000, MinDuration: 10.0, MinScore: 0.6}
+	return Options{
+		MinSamples:     10000,
+		MinDuration:    10.0,
+		MinScore:       0.6,
+		TargetSamples:  targetSamples,
+		TargetDuration: targetDurationSeconds,
+		MinStackDepth:  2.0,
+	}
 }
 
 func clamp01(v float64) float64 {
@@ -32,13 +43,23 @@ func clamp01(v float64) float64 {
 // error is non-nil only on I/O or parse failure (caller should exit 2).
 // report.Valid==false with error==nil means below threshold (caller exits 1).
 func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error) {
+	if opts.TargetSamples == 0 {
+		opts.TargetSamples = targetSamples
+	}
+	if opts.TargetDuration == 0 {
+		opts.TargetDuration = targetDurationSeconds
+	}
+	if opts.MinStackDepth == 0 {
+		opts.MinStackDepth = 2.0
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, fmt.Errorf("%w: %v", errors.ErrReadFile, err)
 	}
 	p, err := profile.ParseData(data)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return nil, fmt.Errorf("%w: %v", errors.ErrParseProfile, err)
 	}
 
 	hasCPU := false
@@ -56,7 +77,7 @@ func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error
 	report := &profiletypes.QualityReport{}
 
 	if !hasCPU {
-		report.Errors = append(report.Errors, "no cpu sample type")
+		report.Errors = append(report.Errors, errors.ErrNoCPUSampleType.Error())
 		return report, nil
 	}
 
@@ -94,21 +115,21 @@ func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error
 	if durationSec < int64(opts.MinDuration) {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("profile too short: %ds < %.0fs", durationSec, opts.MinDuration))
 	}
-	if avgStackDepth < 2 {
-		report.Errors = append(report.Errors, "flat/cold profile: avg stack depth < 2")
+	if avgStackDepth < opts.MinStackDepth {
+		report.Errors = append(report.Errors, fmt.Sprintf("flat/cold profile: avg stack depth < %.1f", opts.MinStackDepth))
 	}
 
-	density := clamp01(float64(sampleCount) / targetSamples)
+	density := clamp01(float64(sampleCount) / float64(opts.TargetSamples))
 	richness := clamp01(float64(uniqueStacks) / (0.02*float64(sampleCount) + 1))
-	coverage := clamp01(float64(durationSec) / targetDuration)
+	coverage := clamp01(float64(durationSec) / opts.TargetDuration)
 	var depthOK float64
-	if avgStackDepth >= 2 {
+	if avgStackDepth >= opts.MinStackDepth {
 		depthOK = 1.0
 	}
 	score := 0.40*density + 0.30*richness + 0.20*coverage + 0.10*depthOK
 
 	report.QualityScore = math.Round(score*1000) / 1000
-	report.Valid = score >= opts.MinScore && avgStackDepth >= 2 && sampleCount >= opts.MinSamples && len(report.Errors) == 0
+	report.Valid = score >= opts.MinScore && avgStackDepth >= opts.MinStackDepth && sampleCount >= opts.MinSamples && len(report.Errors) == 0
 
 	return report, nil
 }

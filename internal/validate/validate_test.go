@@ -6,27 +6,34 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/Better-Go-Labs/pgoctl/internal/validate"
+	profiletypes "github.com/Better-Go-Labs/pgoctl/internal/profile"
 )
 
-func generateCPUProfile(durationMs int) ([]byte, error) {
+func generateCPUProfile(t *testing.T, durationMs int) []byte {
 	f, err := os.CreateTemp("", "cpu*.pprof")
-	if err != nil {
-		return nil, err
-	}
+	require.NoError(t, err)
 	defer os.Remove(f.Name())
 	defer f.Close()
 
-	if err := pprof.StartCPUProfile(f); err != nil {
-		return nil, err
-	}
+	err = pprof.StartCPUProfile(f)
+	require.NoError(t, err)
+
 	deadline := time.Now().Add(time.Duration(durationMs) * time.Millisecond)
 	for time.Now().Before(deadline) {
 		_ = fib(30)
 	}
 	pprof.StopCPUProfile()
-	f.Seek(0, 0)
-	return os.ReadFile(f.Name())
+
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(f.Name())
+	require.NoError(t, err)
+	return data
 }
 
 func fib(n int) int {
@@ -36,73 +43,118 @@ func fib(n int) int {
 	return fib(n-1) + fib(n-2)
 }
 
-func TestValidate_ValidProfile(t *testing.T) {
-	data, err := generateCPUProfile(500)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.CreateTemp("", "valid*.pprof")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(f.Name())
-	f.Write(data)
-	f.Close()
+func TestValidate_TableDriven(t *testing.T) {
+	// Generate valid pprof data for test setup
+	validData := generateCPUProfile(t, 200)
 
-	opts := validate.DefaultOptions()
-	opts.MinSamples = 1
-	opts.MinScore = 0.1
-	report, err := validate.ValidateFile(f.Name(), opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name        string
+		setup       func(t *testing.T) string
+		teardown    func(t *testing.T, path string)
+		opts        validate.Options
+		expectValid bool
+		expectError bool
+		checkResult func(t *testing.T, r *profiletypes.QualityReport)
+	}{
+		{
+			name: "Valid Profile",
+			setup: func(t *testing.T) string {
+				f, err := os.CreateTemp("", "valid*.pprof")
+				require.NoError(t, err)
+				_, err = f.Write(validData)
+				require.NoError(t, err)
+				f.Close()
+				return f.Name()
+			},
+			teardown: func(t *testing.T, path string) {
+				os.Remove(path)
+			},
+			opts: func() validate.Options {
+				o := validate.DefaultOptions()
+				o.MinSamples = 1
+				o.MinScore = 0.1
+				return o
+			}(),
+			expectValid: true,
+			expectError: false,
+			checkResult: func(t *testing.T, r *profiletypes.QualityReport) {
+				assert.NotEmpty(t, r.Samples, "Samples count should be non-zero")
+				assert.NotEmpty(t, r.UniqueStacks, "Unique stacks count should be non-zero")
+			},
+		},
+		{
+			name: "Nonexistent File",
+			setup: func(t *testing.T) string {
+				return "/nonexistent/path/does/not/exist.pprof"
+			},
+			teardown:    func(t *testing.T, path string) {},
+			opts:        validate.DefaultOptions(),
+			expectValid: false,
+			expectError: true,
+		},
+		{
+			name: "Invalid Data",
+			setup: func(t *testing.T) string {
+				f, err := os.CreateTemp("", "bad*.pprof")
+				require.NoError(t, err)
+				_, err = f.WriteString("not a pprof file")
+				require.NoError(t, err)
+				f.Close()
+				return f.Name()
+			},
+			teardown: func(t *testing.T, path string) {
+				os.Remove(path)
+			},
+			opts:        validate.DefaultOptions(),
+			expectValid: false,
+			expectError: true,
+		},
+		{
+			name: "Score Formula Validation",
+			setup: func(t *testing.T) string {
+				f, err := os.CreateTemp("", "score*.pprof")
+				require.NoError(t, err)
+				_, err = f.Write(validData)
+				require.NoError(t, err)
+				f.Close()
+				return f.Name()
+			},
+			teardown: func(t *testing.T, path string) {
+				os.Remove(path)
+			},
+			opts: func() validate.Options {
+				o := validate.DefaultOptions()
+				o.MinSamples = 1
+				return o
+			}(),
+			expectValid: false,
+			expectError: false,
+			checkResult: func(t *testing.T, r *profiletypes.QualityReport) {
+				assert.GreaterOrEqual(t, r.QualityScore, 0.0, "Score should be >= 0")
+				assert.LessOrEqual(t, r.QualityScore, 1.0, "Score should be <= 1")
+			},
+		},
 	}
-	if report == nil {
-		t.Fatal("nil report")
-	}
-	if report.Samples == 0 {
-		t.Error("expected samples > 0")
-	}
-}
 
-func TestValidate_NonexistentFile(t *testing.T) {
-	_, err := validate.ValidateFile("/nonexistent/path.pprof", validate.DefaultOptions())
-	if err == nil {
-		t.Fatal("expected error for missing file")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := tt.setup(t)
+			defer tt.teardown(t, path)
 
-func TestValidate_InvalidData(t *testing.T) {
-	f, err := os.CreateTemp("", "bad*.pprof")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(f.Name())
-	f.WriteString("not a pprof file")
-	f.Close()
-
-	_, err = validate.ValidateFile(f.Name(), validate.DefaultOptions())
-	if err == nil {
-		t.Fatal("expected parse error")
-	}
-}
-
-func TestValidate_ScoreFormula(t *testing.T) {
-	data, err := generateCPUProfile(200)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f, _ := os.CreateTemp("", "score*.pprof")
-	defer os.Remove(f.Name())
-	f.Write(data)
-	f.Close()
-
-	opts := validate.DefaultOptions()
-	opts.MinSamples = 1
-	report, err := validate.ValidateFile(f.Name(), opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if report.QualityScore < 0 || report.QualityScore > 1 {
-		t.Errorf("score %f out of [0,1]", report.QualityScore)
+			report, err := validate.ValidateFile(path, tt.opts)
+			if tt.expectError {
+				assert.Error(t, err, "Expected an error")
+				assert.Nil(t, report, "Report should be nil on error")
+			} else {
+				assert.NoError(t, err, "Unexpected error")
+				assert.NotNil(t, report, "Report should not be nil")
+				if tt.expectValid {
+					assert.True(t, report.Valid, "Report should be valid")
+				}
+				if tt.checkResult != nil {
+					tt.checkResult(t, report)
+				}
+			}
+		})
 	}
 }

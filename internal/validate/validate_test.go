@@ -134,6 +134,33 @@ func TestValidate_TableDriven(t *testing.T) {
 				assert.LessOrEqual(t, r.QualityScore, 1.0, "Score should be <= 1")
 			},
 		},
+		{
+			name: "Custom Density-Only Weight",
+			setup: func(t *testing.T) string {
+				f, err := os.CreateTemp("", "density-only*.pprof")
+				require.NoError(t, err)
+				_, err = f.Write(validData)
+				require.NoError(t, err)
+				f.Close()
+				return f.Name()
+			},
+			teardown: func(t *testing.T, path string) { os.Remove(path) },
+			opts: func() validate.Options {
+				o := validate.DefaultOptions()
+				o.MinSamples = 1
+				o.WeightDensity = 1
+				o.WeightRichness = 0
+				o.WeightCoverage = 0
+				o.WeightDepth = 0
+				return o
+			}(),
+			expectValid: false,
+			expectError: false,
+			checkResult: func(t *testing.T, r *profiletypes.QualityReport) {
+				expected := float64(r.Samples) / 50000
+				assert.InDelta(t, expected, r.QualityScore, 0.001, "score should equal density term")
+			},
+		},
 	}
 
 	for _, tt := range tests {

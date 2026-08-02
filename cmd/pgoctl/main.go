@@ -38,6 +38,7 @@ func newValidateCmd() *cobra.Command {
 	var targetSamples int64
 	var targetDuration float64
 	var minStackDepth float64
+	var weightDensity, weightRichness, weightCoverage, weightDepth, richnessFactor float64
 
 	cmd := &cobra.Command{
 		Use:   "validate <path>",
@@ -51,6 +52,11 @@ func newValidateCmd() *cobra.Command {
 				TargetSamples:      targetSamples,
 				TargetDuration:     targetDuration,
 				MinStackDepth:      minStackDepth,
+				WeightDensity:      weightDensity,
+				WeightRichness:     weightRichness,
+				WeightCoverage:     weightCoverage,
+				WeightDepth:        weightDepth,
+				RichnessFactor:     richnessFactor,
 			}
 			report, err := validate.ValidateFile(args[0], opts)
 			if err != nil {
@@ -76,6 +82,11 @@ func newValidateCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&targetSamples, "target-samples", 50000, "target sample count for quality scoring")
 	cmd.Flags().Float64Var(&targetDuration, "target-duration", 30.0, "target duration in seconds for quality scoring")
 	cmd.Flags().Float64Var(&minStackDepth, "min-stack-depth", 2.0, "minimum average stack depth")
+	cmd.Flags().Float64Var(&weightDensity, "weight-density", 0.40, "density score weight")
+	cmd.Flags().Float64Var(&weightRichness, "weight-richness", 0.30, "richness score weight")
+	cmd.Flags().Float64Var(&weightCoverage, "weight-coverage", 0.20, "coverage score weight")
+	cmd.Flags().Float64Var(&weightDepth, "weight-depth", 0.10, "depth score weight")
+	cmd.Flags().Float64Var(&richnessFactor, "richness-factor", 0.02, "richness scaling factor")
 	return cmd
 }
 

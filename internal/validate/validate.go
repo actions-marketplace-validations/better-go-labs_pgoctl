@@ -22,6 +22,11 @@ type Options struct {
 	TargetSamples      int64
 	TargetDuration     float64 // seconds
 	MinStackDepth      float64
+	WeightDensity      float64
+	WeightRichness     float64
+	WeightCoverage     float64
+	WeightDepth        float64
+	RichnessFactor     float64
 }
 
 func DefaultOptions() Options {
@@ -32,6 +37,11 @@ func DefaultOptions() Options {
 		TargetSamples:      targetSamples,
 		TargetDuration:     targetDurationSeconds,
 		MinStackDepth:      2.0,
+		WeightDensity:      0.40,
+		WeightRichness:     0.30,
+		WeightCoverage:     0.20,
+		WeightDepth:        0.10,
+		RichnessFactor:     0.02,
 	}
 }
 
@@ -51,6 +61,16 @@ func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error
 	}
 	if opts.MinStackDepth == 0 {
 		opts.MinStackDepth = 2.0
+	}
+	defaults := DefaultOptions()
+	if opts.WeightDensity == 0 && opts.WeightRichness == 0 && opts.WeightCoverage == 0 && opts.WeightDepth == 0 {
+		opts.WeightDensity = defaults.WeightDensity
+		opts.WeightRichness = defaults.WeightRichness
+		opts.WeightCoverage = defaults.WeightCoverage
+		opts.WeightDepth = defaults.WeightDepth
+	}
+	if opts.RichnessFactor == 0 {
+		opts.RichnessFactor = defaults.RichnessFactor
 	}
 
 	data, err := os.ReadFile(path)
@@ -120,13 +140,13 @@ func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error
 	}
 
 	density := clamp(float64(sampleCount) / float64(opts.TargetSamples))
-	richness := clamp(float64(uniqueStacks) / (0.02*float64(sampleCount) + 1))
+	richness := clamp(float64(uniqueStacks) / (opts.RichnessFactor*float64(sampleCount) + 1))
 	coverage := clamp(float64(durationSec) / opts.TargetDuration)
 	var depthOK float64
 	if avgStackDepth >= opts.MinStackDepth {
 		depthOK = 1.0
 	}
-	score := 0.40*density + 0.30*richness + 0.20*coverage + 0.10*depthOK
+	score := opts.WeightDensity*density + opts.WeightRichness*richness + opts.WeightCoverage*coverage + opts.WeightDepth*depthOK
 
 	report.QualityScore = math.Round(score*1000) / 1000
 	report.Valid = score >= opts.MinScore && avgStackDepth >= opts.MinStackDepth && sampleCount >= opts.MinSamples && len(report.Errors) == 0

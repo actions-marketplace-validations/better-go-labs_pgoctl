@@ -69,7 +69,7 @@ jobs:
             --namespace monitoring \
             --set grafana.enabled=false \
             --set alertmanager.enabled=false \
-            --set prometheus.prometheusSpec.enableRemoteWriteReceiver=true \
+            --set 'server.extraArgs.web.enable-remote-write-receiver=' \
             --wait --timeout 5m
 
       # DIAGNOSTIC 1: Verify the remote-write flag actually reached the pod.

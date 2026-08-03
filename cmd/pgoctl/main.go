@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -46,12 +48,100 @@ func newValidateCmd() *cobra.Command {
 	var targetDuration float64
 	var minStackDepth float64
 	var weightDensity, weightRichness, weightCoverage, weightDepth, richnessFactor float64
+	var minPackageShare []string
+
+	// validateConfigFlags are the flags resolved from env/config (precedence:
+	// CLI > env > config file > default). json is the root persistent flag.
+	validateConfigFlags := []string{
+		"min-samples", "min-duration", "min-score",
+		"target-samples", "target-duration", "min-stack-depth",
+		"weight-density", "weight-richness", "weight-coverage", "weight-depth",
+		"richness-factor", "min-package-share", "json",
+	}
 
 	cmd := &cobra.Command{
 		Use:   "validate <path>",
 		Short: "Score a CPU pprof for quality before merging",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			v, err := newViper(cmd)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %s\n", err)
+				os.Exit(2)
+			}
+			cfg, err := resolveConfig(cmd, v, validateConfigFlags)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %s\n", err)
+				os.Exit(2)
+			}
+			// Apply env/config values to flags not set explicitly on the CLI.
+			var configErrs []string
+			for name, val := range cfg {
+				applyErr := func() error {
+					switch name {
+					case "json":
+						b, err := strconv.ParseBool(val)
+						if err != nil {
+							return err
+						}
+						jsonOutput = b
+					case "min-package-share":
+						// valueFrom joins YAML lists with commas; the existing
+						// parser already handles comma-separated entries.
+						minPackageShare = []string{val}
+					case "min-samples", "target-samples":
+						n, err := strconv.ParseInt(val, 10, 64)
+						if err != nil {
+							return err
+						}
+						if name == "min-samples" {
+							minSamples = n
+						} else {
+							targetSamples = n
+						}
+					default: // float64 flags
+						f, err := strconv.ParseFloat(val, 64)
+						if err != nil {
+							return err
+						}
+						switch name {
+						case "min-duration":
+							minDuration = f
+						case "min-score":
+							minScore = f
+						case "target-duration":
+							targetDuration = f
+						case "min-stack-depth":
+							minStackDepth = f
+						case "weight-density":
+							weightDensity = f
+						case "weight-richness":
+							weightRichness = f
+						case "weight-coverage":
+							weightCoverage = f
+						case "weight-depth":
+							weightDepth = f
+						case "richness-factor":
+							richnessFactor = f
+						}
+					}
+					return nil
+				}()
+				if applyErr != nil {
+					configErrs = append(configErrs, fmt.Sprintf("%s: %q", name, val))
+				}
+			}
+			if len(configErrs) > 0 {
+				fmt.Fprintf(os.Stderr, "error: invalid env/config value for %s\n",
+					strings.Join(configErrs, ", "))
+				os.Exit(2)
+			}
+
+			gates, err := validate.ParsePackageShareGates(minPackageShare)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %s\n", err)
+				os.Exit(2)
+			}
 			opts := validate.Options{
 				MinSamples:         minSamples,
 				MinDurationSeconds: minDuration,
@@ -64,6 +154,7 @@ func newValidateCmd() *cobra.Command {
 				WeightCoverage:     weightCoverage,
 				WeightDepth:        weightDepth,
 				RichnessFactor:     richnessFactor,
+				PackageShareGates:  gates,
 			}
 			report, err := validate.ValidateFile(args[0], opts)
 			if err != nil {
@@ -94,6 +185,7 @@ func newValidateCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&weightCoverage, "weight-coverage", 0.20, "coverage score weight")
 	cmd.Flags().Float64Var(&weightDepth, "weight-depth", 0.10, "depth score weight")
 	cmd.Flags().Float64Var(&richnessFactor, "richness-factor", 0.02, "richness scaling factor")
+	cmd.Flags().StringArrayVar(&minPackageShare, "min-package-share", nil, "min combined flat CPU %% for a package prefix, e.g. github.com/prometheus/prometheus/tsdb:5 (repeatable or comma-separated; subpackages included)")
 	return cmd
 }
 
@@ -253,6 +345,9 @@ func printQualityReport(report *profiletypes.QualityReport, jsonOutput bool) {
 		fmt.Fprintf(w, "quality_score\t%.3f\n", report.QualityScore)
 		fmt.Fprintf(w, "samples\t%d\n", report.Samples)
 		fmt.Fprintf(w, "unique_stacks\t%d\n", report.UniqueStacks)
+		for prefix, share := range report.PackageShares {
+			fmt.Fprintf(w, "package_share\t%s\t%.2f%%\n", prefix, share)
+		}
 		for _, e := range report.Errors {
 			fmt.Fprintf(w, "error\t%s\n", e)
 		}

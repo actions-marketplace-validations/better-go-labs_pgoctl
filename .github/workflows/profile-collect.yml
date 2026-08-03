@@ -20,6 +20,9 @@ name: Profile Collect
 # workflow goes live for dispatch only after it is merged to main.
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       duration:

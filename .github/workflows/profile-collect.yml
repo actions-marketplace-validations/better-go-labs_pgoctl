@@ -1,3 +1,4 @@
+# Trigger-refresh v2
 name: Profile Collect
 # Spins up Prometheus in kind, drives a REAL load mix DURING the pprof
 # capture window, captures a 60s CPU pprof, validates it with pgoctl

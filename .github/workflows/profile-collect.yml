@@ -197,14 +197,7 @@ jobs:
           curl -s http://localhost:9090/api/v1/query?query=count(up) | python3 -m json.tool 2>/dev/null || echo "query failed"
           echo "::endgroup::"
           echo "::group::Prometheus scrape targets summary"
-          curl -s http://localhost:9090/api/v1/targets | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-data=d.get('data',{})
-targets=data.get('activeTargets',[])
-scrape_pools=data.get('scrapePools',[])
-print(f'Targets: {len(targets)}, Scrape pools: {len(scrape_pools)}')
-" 2>/dev/null || echo "targets query failed"
+          curl -s http://localhost:9090/api/v1/targets | python3 -c "import json,sys;d=json.load(sys.stdin);t=d.get('data',{}).get('activeTargets',[]);print(f'Targets: {len(t)}, Scrape pools: {len(d.get('data',{}).get('scrapePools',[]))}')" 2>/dev/null || echo "targets query failed"
           echo "::endgroup::"
 
       # Capture with retry: baseline itself fails loudly on truncated reads,

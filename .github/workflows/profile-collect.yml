@@ -75,7 +75,7 @@ jobs:
             --namespace monitoring \
             --set grafana.enabled=false \
             --set alertmanager.enabled=false \
-            --set 'server.extraArgs.web.enable-remote-write-receiver=' \
+            --set 'prometheus.prometheusSpec.enableRemoteWriteReceiver=true' \
             --wait --timeout 5m
 
       # DIAGNOSTIC 1: Verify the remote-write flag actually reached the pod.
@@ -88,8 +88,8 @@ jobs:
           helm get values prometheus -n monitoring | grep -A 5 -i "remote" || echo "no remote-write values found"
           echo "::endgroup::"
           echo "::group::Pod args (look for web.enable-remote-write-receiver)"
-          kubectl exec -n monitoring -l app.kubernetes.io/name=prometheus -- \
-            sh -c "ps aux | grep prometheus | grep -v grep" || true
+          kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus \
+            -o jsonpath='{.items[0].spec.containers[0].args}' | python3 -m json.tool || true
           echo "::endgroup::"
 
       # Real readiness gate before port-forward: `helm --wait` only proves
@@ -132,12 +132,13 @@ jobs:
       # didn't wire up the remote-write receiver, so loadgen data never hits Prometheus.
       - name: Verify remote-write endpoint
         run: |
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/api/v1/write)
-          echo "Remote-write endpoint HTTP status: $HTTP_CODE (expect 200 or 400-with-body, NOT 404/503)"
-          BODY=$(curl -s http://localhost:9090/api/v1/write)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/x-protobuf' --data-binary '' http://localhost:9090/api/v1/write)
+          echo "Remote-write endpoint HTTP status: $HTTP_CODE (expect 400 or 204, NOT 404/405/503)"
+          BODY=$(curl -s -X POST -H 'Content-Type: application/x-protobuf' --data-binary '' http://localhost:9090/api/v1/write)
           echo "Response body: $BODY"
-          if [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "503" ]; then
-            echo "::error::Remote-write endpoint is NOT available ($HTTP_CODE) — loadgen data will be silently dropped"
+          if [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "405" ] || [ "$HTTP_CODE" = "503" ]; then
+            echo "::error::Remote-write endpoint NOT available ($HTTP_CODE) — receiver is OFF, loadgen data will be silently dropped"
+            exit 1
           fi
 
       # Load must overlap the capture window: a profile of an idle server is

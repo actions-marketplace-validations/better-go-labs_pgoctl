@@ -47,7 +47,8 @@ func buildTwoFnProfile(t *testing.T, fn1, fn2 string, fn1Count, fn2Count int) []
 func TestCompare_Improvement(t *testing.T) {
 	// Baseline: hotFn monopolises CPU (1000 samples, 0 in other)
 	// Candidate: PGO made hotFn faster — fewer samples, rest moved to otherFn
-	// Expected: hotFn base=100%, cand=70% → delta=+30% → Promote
+	// hotFn: base=100%, cand=70% → relative delta = (100−70)/100×100 = 30% → Promote
+	// otherFn appears only in candidate (b=0), excluded from summary.
 	base := buildTwoFnProfile(t, "main.hotFn", "main.otherFn", 1000, 0)
 	cand := buildTwoFnProfile(t, "main.hotFn", "main.otherFn", 700, 300)
 
@@ -64,7 +65,9 @@ func TestCompare_Improvement(t *testing.T) {
 }
 
 func TestCompare_Regression(t *testing.T) {
-	// Candidate is worse: hotFn grew from 70% to 100%
+	// Candidate is worse: hotFn grew from 70% to 100% of samples.
+	// otherFn disappeared in candidate (c=0) so is excluded from the summary;
+	// summary = (70−100)/70×100 = −42.86% → Rollback.
 	base := buildTwoFnProfile(t, "main.hotFn", "main.otherFn", 700, 300)
 	cand := buildTwoFnProfile(t, "main.hotFn", "main.otherFn", 1000, 0)
 
@@ -131,6 +134,10 @@ func TestCompare_MinCPUPercentFilter(t *testing.T) {
 	// Candidate shifts hotFn→warmFn and coldFn grows 10%→15%.
 	// With MinCPUPercent=20, coldFn is below the threshold in BOTH profiles
 	// and must be excluded from the comparison.
+	// Summary (hotFn + warmFn only, both present in both profiles):
+	//   summaryNum = (60−51) + (30−34) = 9 − 4 = 5
+	//   summaryDen = 60 + 30 = 90
+	//   summary = 5/90×100 ≈ 5.56 → Neutral (< 10% threshold)
 	base := buildFnProfile(t, map[string]int{"main.hotFn": 600, "main.warmFn": 300, "main.coldFn": 100})
 	cand := buildFnProfile(t, map[string]int{"main.hotFn": 510, "main.warmFn": 340, "main.coldFn": 150})
 
@@ -148,18 +155,21 @@ func TestCompare_MinCPUPercentFilter(t *testing.T) {
 			t.Errorf("coldFn should have been filtered out, got delta %+v", d)
 		}
 	}
-	// 60*(60-51)/100 + 30*(30-34)/100 = 5.4 - 1.2 = 4.2
-	if math.Abs(rpt.SummaryCPUDelta-4.2) > 0.01 {
-		t.Errorf("expected summary delta 4.2 with filter, got %.2f", rpt.SummaryCPUDelta)
+	// summaryNum=5, summaryDen=90 → 5/90×100 ≈ 5.56
+	if math.Abs(rpt.SummaryCPUDelta-5.56) > 0.01 {
+		t.Errorf("expected summary delta 5.56 with filter, got %.2f", rpt.SummaryCPUDelta)
 	}
-	if rpt.Verdict != compare.Promote {
-		t.Errorf("expected Promote, got %s (delta=%.2f)", rpt.Verdict, rpt.SummaryCPUDelta)
+	if rpt.Verdict != compare.Neutral {
+		t.Errorf("expected Neutral, got %s (delta=%.2f)", rpt.Verdict, rpt.SummaryCPUDelta)
 	}
 }
 
 func TestCompare_NoFilterByDefault(t *testing.T) {
 	// Default GateConfig has MinCPUPercent=0 → no filtering: coldFn stays in
-	// the comparison and drags the summary to 3.7 (incl. its -0.5 regression).
+	// the comparison. All three functions are present in both profiles, so:
+	//   summaryNum = (60−51) + (30−34) + (10−15) = 9 − 4 − 5 = 0
+	//   summaryDen = 60 + 30 + 10 = 100
+	//   summary = 0 (gains and regressions cancel across the full 100% share)
 	base := buildFnProfile(t, map[string]int{"main.hotFn": 600, "main.warmFn": 300, "main.coldFn": 100})
 	cand := buildFnProfile(t, map[string]int{"main.hotFn": 510, "main.warmFn": 340, "main.coldFn": 150})
 
@@ -179,9 +189,9 @@ func TestCompare_NoFilterByDefault(t *testing.T) {
 	if !found {
 		t.Error("coldFn should be present when filtering is disabled")
 	}
-	// 60*0.09 + 30*(-0.04) + 10*(-0.05) = 3.7
-	if math.Abs(rpt.SummaryCPUDelta-3.7) > 0.01 {
-		t.Errorf("expected summary delta 3.7 without filter, got %.2f", rpt.SummaryCPUDelta)
+	// All three functions present in both profiles → summaryNum = Σ(b−c) = 0
+	if math.Abs(rpt.SummaryCPUDelta) > 0.01 {
+		t.Errorf("expected summary delta ~0 without filter, got %.2f", rpt.SummaryCPUDelta)
 	}
 }
 
@@ -189,9 +199,10 @@ func TestCompare_NoFilterByDefault(t *testing.T) {
 // uses its own MinCPURegression threshold instead of mirroring
 // MinCPUImprovement, so the two can be tuned independently.
 func TestCompare_IndependentRollbackThreshold(t *testing.T) {
-	// hotFn regresses from 90% to 100% of CPU → summary = -8.0.
-	// That is below the default -3.0 rollback threshold, so the default
-	// config must roll back…
+	// hotFn regresses from 90% to 100% of CPU; otherFn disappears (c=0) and
+	// is excluded from the summary.
+	// summary = (90−100)/90×100 = −11.11%
+	// That is below the default −10% rollback threshold → Rollback.
 	base := buildTwoFnProfile(t, "main.hotFn", "main.otherFn", 900, 100)
 	cand := buildTwoFnProfile(t, "main.hotFn", "main.otherFn", 1000, 0)
 
@@ -199,22 +210,22 @@ func TestCompare_IndependentRollbackThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compare (default): %v", err)
 	}
-	if math.Abs(def.SummaryCPUDelta+8.0) > 0.01 {
-		t.Fatalf("expected delta -8.0, got %.2f", def.SummaryCPUDelta)
+	if math.Abs(def.SummaryCPUDelta+11.11) > 0.01 {
+		t.Fatalf("expected delta -11.11, got %.2f", def.SummaryCPUDelta)
 	}
 	if def.Verdict != compare.Rollback {
 		t.Errorf("expected Rollback at default threshold, got %s", def.Verdict)
 	}
 
-	// …but a lax rollback threshold (10.0) must NOT roll back, even though
+	// A lax rollback threshold (15.0) must NOT roll back, even though
 	// the improvement threshold is unchanged: the gates are independent.
 	gate := compare.DefaultGateConfig()
-	gate.MinCPURegression = 10.0
+	gate.MinCPURegression = 15.0
 	rpt, err := compare.Profiles(base, cand, gate)
 	if err != nil {
 		t.Fatalf("compare (custom rollback): %v", err)
 	}
 	if rpt.Verdict != compare.Neutral {
-		t.Errorf("expected Neutral with MinCPURegression=10, got %s", rpt.Verdict)
+		t.Errorf("expected Neutral with MinCPURegression=15, got %s", rpt.Verdict)
 	}
 }

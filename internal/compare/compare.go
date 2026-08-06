@@ -23,7 +23,7 @@ type FunctionDelta struct {
 	Function string  `json:"function"`
 	BasePct  float64 `json:"base_pct"`
 	CandPct  float64 `json:"cand_pct"`
-	DeltaPct float64 `json:"delta_pct"` // positive = candidate uses LESS CPU
+	DeltaPct float64 `json:"delta_pct"` // relative % change: (base−cand)/base×100; positive = candidate uses less CPU; 0 when base=0
 }
 
 // Report is the full output of pgoctl compare.
@@ -31,21 +31,21 @@ type Report struct {
 	BaselineSamples   int64           `json:"baseline_samples"`
 	CandidateSamples  int64           `json:"candidate_samples"`
 	TopDeltas         []FunctionDelta `json:"top_deltas"`
-	SummaryCPUDelta   float64         `json:"summary_cpu_delta_pct"` // positive = improvement
+	SummaryCPUDelta   float64         `json:"summary_cpu_delta_pct"` // positive = improvement; weighted avg relative change over functions present in both profiles
 	FilteredFunctions int64           `json:"filtered_functions"`    // dropped by MinCPUPercent filter
 	Verdict           Verdict         `json:"verdict"`
 }
 
 // GateConfig holds the thresholds used to decide the verdict.
 type GateConfig struct {
-	MinCPUImprovement float64 // percentage points required for Promote
-	MinCPURegression  float64 // percentage points of regression required for Rollback (independent of MinCPUImprovement)
+	MinCPUImprovement float64 // relative % improvement required for Promote
+	MinCPURegression  float64 // relative % regression required for Rollback (independent of MinCPUImprovement)
 	MinCPUPercent     float64 // drop functions below this CPU %% share in BOTH profiles (<= 0 disables)
 	TopN              int     // number of function deltas to include in output
 }
 
 func DefaultGateConfig() GateConfig {
-	return GateConfig{MinCPUImprovement: 3.0, MinCPURegression: 3.0, TopN: 10}
+	return GateConfig{MinCPUImprovement: 10.0, MinCPURegression: 10.0, TopN: 10}
 }
 
 // ProfileFiles loads two pprof files and compares CPU function attribution.
@@ -88,8 +88,13 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 	}
 
 	deltas := make([]FunctionDelta, 0, len(seen))
-	summary := 0.0
+	// Summary: weighted average of relative changes, restricted to functions
+	// present in both profiles (b>0 AND c>0). Excluding single-profile
+	// functions prevents the always-zero cancellation that arises because
+	// percentages in a complete profile always sum to 100 on both sides.
+	var summaryNum, summaryDen float64
 	var filtered int64
+
 	for fn := range seen {
 		b := basePct[fn]
 		c := candPct[fn]
@@ -101,16 +106,22 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 			filtered++
 			continue
 		}
-		d := b - c // positive = candidate spent less CPU here
+		var d float64
+		if b > 0 {
+			d = (b - c) / b * 100
+		}
 		deltas = append(deltas, FunctionDelta{
 			Function: fn,
 			BasePct:  math.Round(b*100) / 100,
 			CandPct:  math.Round(c*100) / 100,
 			DeltaPct: math.Round(d*100) / 100,
 		})
-		// weighted by baseline share: how much of total CPU did this save?
-		summary += b * (d / 100.0)
+		if b > 0 && c > 0 {
+			summaryNum += b - c
+			summaryDen += b
+		}
 	}
+
 	sort.Slice(deltas, func(i, j int) bool {
 		return math.Abs(deltas[i].DeltaPct) > math.Abs(deltas[j].DeltaPct)
 	})
@@ -124,6 +135,11 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 	// overall (improvement), negative = it spends MORE (regression). The
 	// rollback gate uses its own dedicated threshold (MinCPURegression) so
 	// the two gates can be tuned independently.
+	var summary float64
+	if summaryDen > 0 {
+		summary = summaryNum / summaryDen * 100
+	}
+
 	v := Neutral
 	switch {
 	case summary >= gate.MinCPUImprovement:

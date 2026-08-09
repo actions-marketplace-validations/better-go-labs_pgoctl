@@ -1,0 +1,222 @@
+name: 'pgo-action'
+description: 'Collect, validate, merge, and compare PGO profiles for Go services'
+
+inputs:
+  parca-url:
+    description: 'Base URL of the running Parca instance (e.g. http://parca:7070)'
+    required: false
+    default: ''
+  profile-file:
+    description: 'Path to an existing pprof file (skip collect step)'
+    required: false
+    default: ''
+  baseline-profile:
+    description: 'Path to baseline pprof file for comparison (optional)'
+    required: false
+    default: ''
+  duration:
+    description: 'Profile collection duration in seconds'
+    required: false
+    default: '30'
+  min-improvement:
+    description: 'Min CPU delta %% to promote (passed to pgoctl compare)'
+    required: false
+    default: '3.0'
+  min-regression:
+    description: 'Min CPU regression %% to rollback (passed to pgoctl compare)'
+    required: false
+    default: '3.0'
+  validate-flags:
+    description: 'Extra flags to pass to pgoctl validate (e.g. --min-package-share tsdb:5)'
+    required: false
+    default: ''
+  artifact-name:
+    description: 'Name for the uploaded GitHub artifact'
+    required: false
+    default: 'pgo-profile'
+  upload-artifact:
+    description: 'Upload cpu.pprof and default.pgo as a workflow artifact'
+    required: false
+    default: 'true'
+  comment-on-pr:
+    description: 'Post a summary comment on the PR (requires github-token)'
+    required: false
+    default: 'true'
+  github-token:
+    description: 'GitHub token for PR comments'
+    required: false
+    default: ${{ github.token }}
+  pgoctl-version:
+    description: 'pgoctl version to install (default: latest in PATH or built from source)'
+    required: false
+    default: 'latest'
+
+outputs:
+  verdict:
+    description: 'Gate verdict from pgoctl compare: promote | neutral | rollback (empty if no baseline)'
+    value: ${{ steps.compare.outputs.verdict }}
+  profile-path:
+    description: 'Path to the collected/validated pprof file'
+    value: ${{ steps.paths.outputs.profile }}
+  artifact-path:
+    description: 'Path to the merged default.pgo artifact'
+    value: ${{ steps.paths.outputs.artifact }}
+  validate-score:
+    description: 'Quality score from pgoctl validate (0.0–1.0)'
+    value: ${{ steps.validate.outputs.score }}
+
+runs:
+  using: 'composite'
+  steps:
+    # ── install pgoctl ──────────────────────────────────────────────────
+    - name: Install pgoctl
+      shell: bash
+      run: |
+        if command -v pgoctl >/dev/null 2>&1; then
+          echo "pgoctl already on PATH: $(pgoctl --version)"
+        else
+          echo "Building pgoctl from source..."
+          cd ${{ github.action_path }}/../../..
+          go build -o "$RUNNER_TOOL_CACHE/pgoctl" ./cmd/pgoctl
+          echo "$RUNNER_TOOL_CACHE" >> "$GITHUB_PATH"
+        fi
+
+    # ── collect or copy profile ─────────────────────────────────────────
+    - name: Collect profile
+      id: collect
+      shell: bash
+      run: |
+        if [[ -n "${{ inputs.profile-file }}" ]]; then
+          echo "Using existing profile: ${{ inputs.profile-file }}"
+          cp "${{ inputs.profile-file }}" cpu.pprof
+        elif [[ -n "${{ inputs.parca-url }}" ]]; then
+          echo "Collecting ${DURATION}s CPU profile from ${{ inputs.parca-url }}"
+          pgoctl collect \
+            --source=parca \
+            --url="${{ inputs.parca-url }}" \
+            --duration="${{ inputs.duration }}" \
+            --out=cpu.pprof
+        else
+          echo "Error: either parca-url or profile-file must be provided" >&2
+          exit 2
+        fi
+        echo "profile=cpu.pprof" >> "$GITHUB_OUTPUT"
+
+    # ── validate ─────────────────────────────────────────────────────────
+    - name: Validate profile
+      id: validate
+      shell: bash
+      run: |
+        set +e
+        out=$(pgoctl validate ${{ inputs.validate-flags }} --json cpu.pprof 2>&1)
+        exit_code=$?
+        echo "$out"
+        score=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('quality_score',0))" 2>/dev/null || echo "0")
+        valid=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('valid',False))" 2>/dev/null || echo "False")
+        echo "score=$score" >> "$GITHUB_OUTPUT"
+        echo "valid=$valid" >> "$GITHUB_OUTPUT"
+        if [[ $exit_code -eq 1 ]]; then
+          echo "::warning::Profile did not pass the quality gate (score=$score). PGO artifact will still be produced."
+        elif [[ $exit_code -ne 0 ]]; then
+          exit $exit_code
+        fi
+
+    # ── merge → default.pgo ──────────────────────────────────────────────
+    - name: Merge profiles
+      id: merge
+      shell: bash
+      run: |
+        pgoctl merge cpu.pprof --out=default.pgo
+        echo "artifact=default.pgo" >> "$GITHUB_OUTPUT"
+
+    # ── resolve output paths ──────────────────────────────────────────────
+    - name: Set output paths
+      id: paths
+      shell: bash
+      run: |
+        echo "profile=$(pwd)/cpu.pprof" >> "$GITHUB_OUTPUT"
+        echo "artifact=$(pwd)/default.pgo" >> "$GITHUB_OUTPUT"
+
+    # ── compare against baseline (optional) ──────────────────────────────
+    - name: Compare profiles
+      id: compare
+      if: inputs.baseline-profile != ''
+      shell: bash
+      run: |
+        set +e
+        out=$(pgoctl compare \
+          --min-improvement="${{ inputs.min-improvement }}" \
+          --min-regression="${{ inputs.min-regression }}" \
+          --json \
+          "${{ inputs.baseline-profile }}" cpu.pprof 2>&1)
+        exit_code=$?
+        echo "$out"
+        verdict=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('verdict',''))" 2>/dev/null || echo "")
+        delta=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary_cpu_delta_pct',0))" 2>/dev/null || echo "0")
+        echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+        echo "delta=$delta" >> "$GITHUB_OUTPUT"
+        if [[ $exit_code -eq 1 ]]; then
+          echo "::warning::Rollback verdict — CPU regression detected (delta=$delta%)"
+        elif [[ $exit_code -ne 0 ]]; then
+          exit $exit_code
+        fi
+
+    # ── upload artifact ───────────────────────────────────────────────────
+    - name: Upload PGO artifact
+      if: inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          cpu.pprof
+          default.pgo
+        retention-days: 30
+
+    # ── comment on PR ─────────────────────────────────────────────────────
+    - name: Comment on PR
+      if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const verdict  = '${{ steps.compare.outputs.verdict }}' || 'n/a (no baseline)';
+          const delta    = '${{ steps.compare.outputs.delta }}' || '';
+          const score    = '${{ steps.validate.outputs.score }}';
+          const valid    = '${{ steps.validate.outputs.valid }}';
+          const icon     = verdict === 'promote' ? '✅' : verdict === 'rollback' ? '🚨' : 'ℹ️';
+          const deltaStr = delta ? ` | cpu_delta_pct \`${parseFloat(delta).toFixed(2)}%\`` : '';
+
+          const body = [
+            '### pgo-action summary',
+            '',
+            `${icon} **verdict** \`${verdict}\`${deltaStr}`,
+            `**quality_score** \`${score}\` (valid: \`${valid}\`)`,
+            '',
+            'Artifact: `default.pgo` uploaded — use as `-pgo=default.pgo` in your build.',
+          ].join('\n');
+
+          const marker = '<!-- pgo-action-comment -->';
+          const fullBody = marker + '\n' + body;
+
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+
+          const existing = comments.find(c => c.body.includes(marker));
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body: fullBody,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: fullBody,
+            });
+          }

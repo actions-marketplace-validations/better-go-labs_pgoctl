@@ -1,4 +1,4 @@
-.PHONY: build baseline-bin kind-up kind-down collect-baseline load-prometheus test vet clean
+.PHONY: build baseline-bin kind-up kind-down collect-baseline load-prometheus test vet smoke demo clean
 
 BIN          := bin/pgoctl
 BASELINE_BIN := bin/baseline
@@ -30,6 +30,12 @@ collect-baseline: baseline-bin
 load-prometheus:
 	@echo "Sending load to Prometheus query endpoint for 60s..."
 	hey -z 60s -c 50 http://localhost:9090/api/v1/query?query=up
+
+smoke: build
+	PGOCTL=$(BIN) ./scripts/smoke.sh
+
+demo: build
+	PGOCTL=$(BIN) ./demo.sh
 
 test:
 	go test ./...

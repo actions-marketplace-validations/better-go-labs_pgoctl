@@ -9,53 +9,142 @@
 Production profiles from your Go services → validated PGO artifacts → optimized builds → safe canary rollouts → cost reports.
 
 ```
-pgoctl collect  --source=parca   --service=prometheus --window 72h
+pgoctl collect  --source=parca --url=http://parca:7070 --duration=30
 pgoctl validate cpu.pprof
 pgoctl merge    profiles/*.pprof --out default.pgo
 pgoctl explain  default.pgo
-pgoctl compare  baseline.json candidate.json
+pgoctl compare  baseline.pprof candidate.pprof
 ```
-
-## Status
-
-🚧 **Sprint Day 1 — scaffold only.** CLI subcommands land in Week 2 (D6+). See [BENCHMARKS.md](BENCHMARKS.md) for PGO results as they land.
-
-## Demo service
-
-We benchmark against **Prometheus** — pure Go, pprof-enabled by default, widely deployed on Kubernetes. It gives a credible "before/after" story when we optimize a real production-grade Go service.
 
 ## Quick start
 
 ```bash
-# 1. Spin up a local kind cluster with Prometheus
-make kind-up
-
-# 2. Capture a 30s CPU profile from Prometheus under load
-make collect-baseline
-
-# 3. Build pgoctl
+# Build pgoctl
 go build -o bin/pgoctl ./cmd/pgoctl
+
+# Run the full demo (collect → validate → merge → build → explain)
+PARCA_URL=http://localhost:7070 ./demo.sh
+
+# Run the e2e smoke test (no external service required)
+make smoke
 ```
+
+## CLI reference
+
+### `pgoctl collect`
+
+Fetch a CPU profile from a running service.
+
+```
+pgoctl collect --source=parca --url=<base-url> [--duration=30] [--out=cpu.pprof]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--source` | `parca` | Profiling backend. Currently: `parca` |
+| `--url` | _(required)_ | Base URL of the service (e.g. `http://parca:7070`) |
+| `--duration` | `30` | Collection duration in seconds |
+| `--out` | `cpu.pprof` | Output path (`-` for stdout) |
+
+Fetches `/debug/pprof/profile?seconds=<duration>` from the target URL and validates the response is a parseable pprof file before writing.
+
+---
+
+### `pgoctl validate`
+
+Score a CPU pprof for quality before merging.
+
+```
+pgoctl validate [flags] <path>
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--min-samples` | `10000` | Minimum sample count |
+| `--min-duration` | `10.0` | Minimum profile duration in seconds |
+| `--min-score` | `0.6` | Minimum quality score (0–1) |
+| `--min-package-share` | — | Minimum combined flat CPU % for a package prefix (e.g. `tsdb:5`) |
+| `--json` | `false` | JSON output |
+
+Exit codes: **0** = valid, **1** = below quality gate, **2** = input error.
+
+Flags can also be set via env vars (`PGOCTL_MIN_SAMPLES=…`) or a `pgoctl.conf` YAML file. See [Configuration](#configuration).
+
+---
+
+### `pgoctl merge`
+
+Merge validated CPU profiles into a `default.pgo` artifact.
+
+```
+pgoctl merge [flags] <profile...>
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--strategy` | `weighted` | Merge strategy: `weighted`, `latest`, `union` |
+| `--recency-weight` | `2.0` | Multiplier for the most recent profile |
+| `--half-life` | `24.0` | Recency decay half-life in hours |
+| `--drop-invalid` | `false` | Skip unparseable profiles instead of failing |
+| `--out` | `default.pgo` | Output path (`-` for stdout) |
+
+---
+
+### `pgoctl explain`
+
+Analyse a pprof file in human-readable form.
+
+```
+pgoctl explain [--top N] [--format text|json] <path>
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--top` | `20` | Number of top functions to show |
+| `--format` | `text` | Output format: `text` or `json` |
+
+Prints the top hot functions by flat CPU share, groups them by package, and gives a plain-English PGO readiness verdict:
+
+- **ready** — ≥ 50 000 samples across ≥ 20 functions: good PGO baseline
+- **borderline** — 10 000–49 999 samples: will work, denser profile improves inlining
+- **not-ready** — < 10 000 samples or < 20 functions: collect a richer profile first
+
+---
+
+### `pgoctl compare`
+
+Compare two CPU profiles and emit a gate verdict.
+
+```
+pgoctl compare [flags] <baseline.pprof> <candidate.pprof>
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--min-improvement` | `3.0` | Min CPU delta % to promote |
+| `--min-regression` | `3.0` | Min CPU regression % to rollback |
+| `--min-cpu-percent` | `0.0` | Drop functions below this CPU % in both profiles |
+| `--top` | `10` | Number of function deltas to show |
+| `--json` | `false` | JSON output |
+
+Verdict: **promote** (improvement ≥ threshold), **rollback** (regression ≥ threshold), or **neutral**.
+Exit codes: **0** = promote or neutral, **1** = rollback, **2** = input error.
+
+---
 
 ## Configuration
 
-All `pgoctl validate` flags can also be set from a config file or environment
-variable instead of the command line — handy for keeping the growing flag set
-(e.g. repeated `--min-package-share` gates) in one place.
+All `pgoctl validate` flags can be set from a config file or environment variable.
 
 | Source | Example |
-|---|---|
+|--------|---------|
 | CLI flag | `pgoctl validate --min-score 0.9 cpu.pprof` |
 | Env var | `PGOCTL_MIN_SCORE=0.9 pgoctl validate cpu.pprof` |
 | Config file | `pgoctl.conf` (YAML) — see [pgoctl.conf.example](pgoctl.conf.example) |
 
 Precedence: **CLI flag > env var > config file > built-in default**.
 
-The config file is discovered as `pgoctl.conf` (or `pgoctl.yaml`) in the
-current directory, then `~/.config/pgoctl/`, then `/etc/pgoctl/`; the first
-match wins and a missing file is not an error. Env vars use the
-`PGOCTL_<FLAG>` prefix with dashes as underscores
-(e.g. `PGOCTL_MIN_PACKAGE_SHARE="tsdb:5,promql:1.5"`).
+Config file is discovered as `pgoctl.conf` in `./`, `~/.config/pgoctl/`, then `/etc/pgoctl/`. Missing file is not an error.
 
 ```yaml
 # pgoctl.conf (example)
@@ -65,6 +154,10 @@ min-package-share:
   - github.com/prometheus/prometheus/tsdb:5.0
   - github.com/prometheus/prometheus/promql:1.5
 ```
+
+## Demo service
+
+We benchmark against **Prometheus** — pure Go, pprof-enabled by default, widely deployed on Kubernetes.
 
 ## Requirements
 
@@ -76,14 +169,20 @@ min-package-share:
 
 ```
 cmd/
-  pgoctl/     — CLI entry point (Cobra, wired in D6)
+  pgoctl/     — CLI entry point (validate/merge/compare/explain/collect)
   baseline/   — standalone pprof collector for dev/baseline capture
 internal/
-  collector/  — profile fetch + metadata (used by pgoctl collect)
+  collect/    — Parca HTTP adapter and source interface
+  compare/    — profile comparison and gate logic
+  explain/    — flat CPU attribution, package grouping, PGO verdict
+  merge/      — weighted profile merge strategies
+  validate/   — quality scoring, package-share gates
 scripts/
   kind-prometheus.sh  — provision kind cluster + kube-prometheus-stack
-testdata/           — captured .pprof files (gitignored)
-BENCHMARKS.md      — before/after PGO numbers (populated from D4)
+  smoke.sh            — e2e smoke test (no external service required)
+testdata/             — captured .pprof files (LFS)
+demo.sh               — interactive happy-path demo
+BENCHMARKS.md         — before/after PGO numbers
 ```
 
 ## Roadmap

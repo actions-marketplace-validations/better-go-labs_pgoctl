@@ -97,6 +97,7 @@ func newValidateCmd() *cobra.Command {
 					case "min-samples", "target-samples":
 						n, err := strconv.ParseInt(val, 10, 64)
 						if err != nil {
+							return err
 						}
 						if name == "min-samples" {
 							minSamples = n

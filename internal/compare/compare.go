@@ -23,7 +23,7 @@ type FunctionDelta struct {
 	Function string  `json:"function"`
 	BasePct  float64 `json:"base_pct"`
 	CandPct  float64 `json:"cand_pct"`
-	DeltaPct float64 `json:"delta_pct"` // relative % change: (base−cand)/base×100; positive = candidate uses less CPU; 0 when base=0
+	DeltaPct float64 `json:"delta_pct"` // relative % change: (cand-base)/base×100; negative = candidate uses less CPU; 0 when base=0
 }
 
 // Report is the full output of pgoctl compare.
@@ -108,7 +108,7 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 		}
 		var d float64
 		if b > 0 {
-			d = (b - c) / b * 100
+			d = (c - b) / b * 100
 		}
 		deltas = append(deltas, FunctionDelta{
 			Function: fn,
@@ -117,7 +117,7 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 			DeltaPct: math.Round(d*100) / 100,
 		})
 		if b > 0 && c > 0 {
-			summaryNum += b - c
+			summaryNum += c - b
 			summaryDen += b
 		}
 	}
@@ -131,8 +131,8 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 		top = len(deltas)
 	}
 
-	// SummaryCPUDelta is signed: positive = the candidate spends LESS CPU
-	// overall (improvement), negative = it spends MORE (regression). The
+	// SummaryCPUDelta is signed: negative = the candidate spends LESS CPU
+	// overall (improvement), positive = it spends MORE (regression). The
 	// rollback gate uses its own dedicated threshold (MinCPURegression) so
 	// the two gates can be tuned independently.
 	var summary float64
@@ -142,9 +142,9 @@ func compareProfiles(base, cand *profile.Profile, gate GateConfig) *Report {
 
 	v := Neutral
 	switch {
-	case summary >= gate.MinCPUImprovement:
+	case summary <= -gate.MinCPUImprovement:
 		v = Promote
-	case summary <= -gate.MinCPURegression:
+	case summary >= gate.MinCPURegression:
 		v = Rollback
 	}
 

@@ -272,9 +272,9 @@ func newCompareCmd() *cobra.Command {
 		Short: "Compare two CPU profiles and emit a gate verdict",
 		Long: `Compare two pprof files by CPU function attribution.
 
-delta_pct (per function) = (base - cand) / base * 100   [relative %% change]
-  base = 0 → delta_pct = -100  (new CPU cost in the candidate)
-  positive = candidate uses less CPU (improvement)
+delta_pct (per function) = (cand - base) / base * 100   [relative %% change]
+  base = 0 → delta_pct = 0  (new function in candidate, no reference)
+  negative = candidate uses less CPU (improvement)
 
 SummaryCPUDelta = weighted average of relative delta_pct over functions
 present in BOTH profiles (weighted by baseline share). Single-profile

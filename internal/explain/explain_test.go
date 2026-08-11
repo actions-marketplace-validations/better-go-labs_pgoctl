@@ -1,6 +1,7 @@
 package explain
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -165,4 +166,119 @@ func TestPackageFromFunction(t *testing.T) {
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, packageFromFunction(tt.input), tt.input)
 	}
+}
+
+// TestPprofDataVsExplain cross-validates the explain flat-% computation by
+// reading the same profile twice: once with the raw pprof package (ground truth)
+// and once via AnalyzeFile. Both computations must agree to within 0.01%.
+func TestPprofDataVsExplain(t *testing.T) {
+	// Prometheus-style function names. nSamples is the number of pprof sample
+	// entries for each function; each entry carries sampleValue ns of CPU time.
+	type fnWeight struct {
+		fn       string
+		nSamples int
+	}
+	const sampleValue = int64(1000) // nanoseconds per sample entry
+	fnWeights := []fnWeight{
+		{"github.com/prometheus/prometheus/tsdb.(*Head).Append", 5000},
+		{"github.com/prometheus/prometheus/tsdb.(*Head).gc", 3000},
+		{"github.com/prometheus/prometheus/promql.(*Engine).exec", 2000},
+		{"github.com/prometheus/prometheus/tsdb/wlog.(*Watcher).run", 1000},
+		{"runtime.mallocgc", 500},
+	}
+	// Total = 11500 samples (> minSamples=10000, < targetSamples=50000 → borderline).
+
+	var rawSamples []struct {
+		fn    string
+		count int64
+	}
+	for _, fw := range fnWeights {
+		for i := 0; i < fw.nSamples; i++ {
+			rawSamples = append(rawSamples, struct {
+				fn    string
+				count int64
+			}{fw.fn, sampleValue})
+		}
+	}
+
+	p := makeProfile(t, rawSamples)
+	path := writeTmpProfile(t, p)
+
+	// ── Step 1: read profile back with the pprof package and print raw data ──
+	fileData, err := os.ReadFile(path)
+	require.NoError(t, err)
+	parsed, err := profile.ParseData(fileData)
+	require.NoError(t, err)
+
+	t.Logf("=== raw pprof data ===")
+	t.Logf("SampleType: %v", parsed.SampleType)
+	t.Logf("DurationNanos: %d (%.1fs)", parsed.DurationNanos, float64(parsed.DurationNanos)/1e9)
+	t.Logf("Total sample entries: %d", len(parsed.Sample))
+	t.Logf("Functions registered: %d", len(parsed.Function))
+	for _, fn := range parsed.Function {
+		t.Logf("  id=%d  name=%s", fn.ID, fn.Name)
+	}
+
+	// Manually compute flat% from the raw pprof samples — this is the ground truth.
+	idx, ok := cpuSampleIndex(parsed)
+	require.True(t, ok, "pprof profile must contain a cpu or samples value column")
+
+	totalCPU := 0.0
+	rawCounts := make(map[string]float64)
+	for _, s := range parsed.Sample {
+		if len(s.Location) == 0 || len(s.Value) <= idx {
+			continue
+		}
+		v := float64(s.Value[idx])
+		totalCPU += v
+		loc := s.Location[0]
+		if len(loc.Line) > 0 && loc.Line[0].Function != nil {
+			rawCounts[loc.Line[0].Function.Name] += v
+		}
+	}
+
+	t.Logf("=== manually computed flat%% from raw pprof ===")
+	t.Logf("totalCPU: %.0f ns", totalCPU)
+	expectedPct := make(map[string]float64, len(rawCounts))
+	for fn, v := range rawCounts {
+		pct := math.Round(100.0*v/totalCPU*100) / 100
+		expectedPct[fn] = pct
+		t.Logf("  %.2f%%  %s", pct, fn)
+	}
+
+	// ── Step 2: run explain on the same file ──
+	rpt, err := AnalyzeFile(path, 20)
+	require.NoError(t, err)
+
+	t.Logf("=== explain output ===")
+	t.Logf("verdict: %s — %s", rpt.Verdict, rpt.VerdictReason)
+	t.Logf("top functions:")
+	for _, f := range rpt.TopFunctions {
+		t.Logf("  %.2f%%  [%s]  %s", f.FlatPct, f.Package, f.Function)
+	}
+	t.Logf("package groups:")
+	for _, g := range rpt.PackageGroups {
+		t.Logf("  %.2f%%  %s", g.TotalPct, g.Package)
+	}
+
+	// ── Step 3: compare explain output against raw pprof ground truth ──
+	require.NotEmpty(t, rpt.TopFunctions)
+
+	// topN=20 covers all 5 functions — every raw function must appear.
+	assert.Equal(t, len(rawCounts), len(rpt.TopFunctions),
+		"explain must surface all %d functions when topN exceeds unique function count", len(rawCounts))
+
+	// Each function's flat% in the explain report must match the raw computation.
+	for _, f := range rpt.TopFunctions {
+		want, found := expectedPct[f.Function]
+		require.True(t, found, "function %q in explain report was not found in raw pprof data", f.Function)
+		assert.InDelta(t, want, f.FlatPct, 0.01,
+			"flat%% mismatch for %s: raw pprof=%.2f%% explain=%.2f%%",
+			f.Function, want, f.FlatPct)
+	}
+
+	// Verdict check: 11500 samples but only 5 unique functions (< minFunctions=20)
+	// → not-ready on the function-diversity branch, not the sample-count branch.
+	assert.Equal(t, VerdictNotReady, rpt.Verdict)
+	assert.Contains(t, rpt.VerdictReason, "5 unique functions")
 }

@@ -37,7 +37,7 @@ func main() {
 	root.AddCommand(newExplainCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(3)
+		os.Exit(2)
 	}
 }
 

@@ -1,27 +1,35 @@
 # pgoctl
 
-> Continuous PGO and profile-guided optimization for Go workloads on Kubernetes.
+> A CLI to manage continuous profile-guided optimization for Golang applications
 
-`pgoctl` is the CLI backbone of GoOpt — a Kubernetes-native control plane that turns production Go profiles into optimized builds with measurable CPU and latency gains.
+`pgoctl` is a CLI application that turns Go profiles into optimized builds with measurable CPU and latency gains.
 
-## What it does
+[![Go 1.21+](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org/dl/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Smoke](https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml/badge.svg)](https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml)
 
-Production profiles from your Go services → validated PGO artifacts → optimized builds → safe canary rollouts → cost reports.
+## Pipeline
 
-```
-pgoctl collect  --source=parca --parca-addr=http://parca:7070 --query='process_cpu:cpu:nanoseconds:cpu:nanoseconds{job="myapp"}' --window=5m
-pgoctl validate cpu.pprof
-pgoctl merge    profiles/*.pprof --out default.pgo
-pgoctl explain  default.pgo
-pgoctl compare  baseline.pprof candidate.pprof
+```mermaid
+flowchart LR
+    A[Go Service] -->|pprof / Parca| B[collect]
+    B --> C[validate]
+    C --> D[merge]
+    D --> E[default.pgo]
+    E --> F[go build -pgo]
+    F --> G[Optimized Binary]
+    G --> H[compare]
+    H -->|promote / rollback| I{Gate}
 ```
 
 ## Contents
 
 - [Quick start](#quick-start)
+  - [Demo](#demo-requires-a-running-service-or-existing-pprof-file)
+  - [Smoke test](#smoke-test-no-external-services-required)
 - [CLI reference](#cli-reference)
-  - [collect — via Parca](#via-parca-continuous-profiling-server)
-  - [collect — via pprof endpoint](#via-go-pprof-http-endpoint)
+  - [collect, via pprof endpoint](#via-go-pprof-http-endpoint)
+  - [collect, via Parca](#via-parca-continuous-profiling-server)
   - [validate](#pgoctl-validate)
   - [merge](#pgoctl-merge)
   - [explain](#pgoctl-explain)
@@ -29,6 +37,7 @@ pgoctl compare  baseline.pprof candidate.pprof
 - [GitHub Action](#github-action)
 - [Docker](#docker)
 - [Configuration](#configuration)
+- [Demo service](#demo-service)
 - [Requirements](#requirements)
 - [Project layout](#project-layout)
 - [Status](#status)
@@ -36,22 +45,43 @@ pgoctl compare  baseline.pprof candidate.pprof
 
 ## Quick start
 
+### Demo (requires a running service or existing pprof file)
+
 ```bash
-# Build pgoctl
 go build -o bin/pgoctl ./cmd/pgoctl
-
-# Run the full demo (collect → validate → merge → build → explain)
 PARCA_URL=http://localhost:7070 ./demo.sh
+```
 
-# Run the e2e smoke test (no external service required)
+Set `PROFILE_FILE=cpu.pprof ./demo.sh` to skip collect and use an existing file.
+
+### Smoke test (no external services required)
+
+```bash
 make smoke
 ```
+
+Generates a synthetic CPU profile and runs the full pipeline end to end. All 7 checks must pass.
 
 ## CLI reference
 
 ### `pgoctl collect`
 
 Fetch a CPU profile from a running service. Two backends are supported.
+
+#### Via Go pprof HTTP endpoint
+
+Any Go service with pprof enabled (`import _ "net/http/pprof"`) exposes a raw CPU profile endpoint. Collect directly with curl and feed it into the pipeline:
+
+```bash
+# Capture a 30s CPU profile from any pprof-enabled service
+curl -o cpu.pprof "http://localhost:6060/debug/pprof/profile?seconds=30"
+
+# Validate and merge as normal
+pgoctl validate cpu.pprof
+pgoctl merge cpu.pprof --out default.pgo
+```
+
+The endpoint is `GET /debug/pprof/profile?seconds=<N>`, standard on any Go binary that imports `net/http/pprof`. The standalone `cmd/baseline` collector wraps this for Prometheus (`make collect-baseline`).
 
 #### Via Parca (continuous profiling server)
 
@@ -71,22 +101,7 @@ pgoctl collect --source=parca \
 | `--window` | `5m` | Time window for the merged profile (e.g. `5m`, `1h`) |
 | `--out` | `cpu.pprof` | Output path (`-` for stdout) |
 
-Calls `POST /parca.query.v1alpha1.QueryService/MergeProfile` with body `{"start": "…", "end": "…", "query": "…", "reportType": "REPORT_TYPE_PPROF"}`, decodes the base64 `pprof` field from the response, and validates it is a parseable pprof file before writing.
-
-#### Via Go pprof HTTP endpoint
-
-Any Go service with pprof enabled (`import _ "net/http/pprof"`) exposes a raw CPU profile endpoint. Collect directly with curl and feed it into the pipeline:
-
-```bash
-# Capture a 30s CPU profile from any pprof-enabled service
-curl -o cpu.pprof "http://localhost:6060/debug/pprof/profile?seconds=30"
-
-# Validate and merge as normal
-pgoctl validate cpu.pprof
-pgoctl merge cpu.pprof --out default.pgo
-```
-
-The endpoint is `GET /debug/pprof/profile?seconds=<N>` — standard on any Go binary that imports `net/http/pprof`. The standalone `cmd/baseline` collector wraps this for Prometheus (`make collect-baseline`).
+Calls `POST /parca.query.v1alpha1.QueryService/MergeProfile`, decodes the base64 pprof response, and validates it before writing. No extra Go dependencies.
 
 ---
 
@@ -102,13 +117,13 @@ pgoctl validate [flags] <path>
 |------|---------|-------------|
 | `--min-samples` | `10000` | Minimum sample count |
 | `--min-duration` | `10.0` | Minimum profile duration in seconds |
-| `--min-score` | `0.6` | Minimum quality score (0–1) |
-| `--min-package-share` | — | Minimum combined flat CPU % for a package prefix (e.g. `tsdb:5`) |
+| `--min-score` | `0.6` | Minimum quality score (0-1) |
+| `--min-package-share` | -- | Minimum combined flat CPU % for a package prefix (e.g. `tsdb:5`) |
 | `--json` | `false` | JSON output |
 
 Exit codes: **0** = valid, **1** = below quality gate, **2** = input error.
 
-Flags can also be set via env vars (`PGOCTL_MIN_SAMPLES=…`) or a `pgoctl.conf` YAML file. See [Configuration](#configuration).
+Flags can also be set via env vars (`PGOCTL_MIN_SAMPLES=...`) or a `pgoctl.conf` YAML file. See [Configuration](#configuration).
 
 ---
 
@@ -145,9 +160,9 @@ pgoctl explain [--top N] [--format text|json] <path>
 
 Prints the top hot functions by flat CPU share, groups them by package, and gives a plain-English PGO readiness verdict:
 
-- **ready** — ≥ 50 000 samples across ≥ 20 functions: good PGO baseline
-- **borderline** — 10 000–49 999 samples: will work, denser profile improves inlining
-- **not-ready** — < 10 000 samples or < 20 functions: collect a richer profile first
+- **ready**: >= 50 000 samples across >= 20 functions: good PGO baseline
+- **borderline**: 10 000-49 999 samples: will work, denser profile improves inlining
+- **not-ready**: < 10 000 samples or < 20 functions: collect a richer profile first
 
 ---
 
@@ -167,14 +182,14 @@ pgoctl compare [flags] <baseline.pprof> <candidate.pprof>
 | `--top` | `10` | Number of function deltas to show |
 | `--json` | `false` | JSON output |
 
-Verdict: **promote** (improvement ≥ threshold), **rollback** (regression ≥ threshold), or **neutral**.
+Verdict: **promote** (improvement >= threshold), **rollback** (regression >= threshold), or **neutral**.
 Exit codes: **0** = promote or neutral, **1** = rollback, **2** = input error.
 
 ---
 
 ## GitHub Action
 
-`.github/actions/pgo-action` is a composite Action that runs the full pgoctl pipeline in CI — collect (or reuse an existing profile), validate, and compare against a baseline — then optionally uploads the artifact and posts a verdict comment on the PR.
+`.github/actions/pgo-action` is a composite Action that runs the full pgoctl pipeline in CI: collect (or reuse an existing profile), validate, and compare against a baseline, then optionally uploads the artifact and posts a verdict comment on the PR.
 
 ```yaml
 - uses: better-go-labs/pgoctl/.github/actions/pgo-action@main
@@ -244,39 +259,44 @@ min-package-share:
 
 ## Demo service
 
-We benchmark against **Prometheus** — pure Go, pprof-enabled by default, widely deployed on Kubernetes.
+We benchmark against **Prometheus** (pure Go, pprof-enabled by default, widely deployed on Kubernetes).
 
 `demo.sh` runs the interactive happy-path pipeline. Set `PARCA_URL` to point it at your Parca server (it controls the Parca address used by the collect step).
 
 ## Requirements
 
-- Go 1.23+
-- [kind](https://kind.sigs.k8s.io/) + [kubectl](https://kubernetes.io/docs/tasks/tools/) + [helm](https://helm.sh/) (for local dev cluster)
-- [hey](https://github.com/rakyll/hey) (load generator, optional)
+### Required
+
+- Go 1.21+ (PGO support stable since 1.21; this module requires Go 1.23 per `go.mod`)
+
+### Optional (local dev cluster and benchmarking)
+
+- [kind](https://kind.sigs.k8s.io/) + [kubectl](https://kubernetes.io/docs/tasks/tools/) + [helm](https://helm.sh/)
+- [hey](https://github.com/rakyll/hey) (HTTP load generator)
 
 ## Project layout
 
 ```
 cmd/
-  pgoctl/     — CLI entry point (validate/merge/compare/explain/collect)
-  baseline/   — standalone pprof collector for dev/baseline capture
+  pgoctl/     -- CLI entry point (validate/merge/compare/explain/collect)
+  baseline/   -- standalone pprof collector for dev/baseline capture
 internal/
-  collect/    — Parca HTTP adapter and source interface
-  compare/    — profile comparison and gate logic
-  explain/    — flat CPU attribution, package grouping, PGO verdict
-  merge/      — weighted profile merge strategies
-  validate/   — quality scoring, package-share gates
+  collect/    -- Parca HTTP adapter and source interface
+  compare/    -- profile comparison and gate logic
+  explain/    -- flat CPU attribution, package grouping, PGO verdict
+  merge/      -- weighted profile merge strategies
+  validate/   -- quality scoring, package-share gates
 scripts/
-  kind-prometheus.sh  — provision kind cluster + kube-prometheus-stack
-  smoke.sh            — e2e smoke test (no external service required)
-testdata/             — captured .pprof files (LFS)
-demo.sh               — interactive happy-path demo
-BENCHMARKS.md         — before/after PGO numbers
+  kind-prometheus.sh  -- provision kind cluster + kube-prometheus-stack
+  smoke.sh            -- e2e smoke test (no external service required)
+testdata/             -- captured .pprof files (LFS)
+demo.sh               -- interactive happy-path demo
+BENCHMARKS.md         -- before/after PGO numbers
 ```
 
 ## Status
 
-v0.1.0 sprint complete — D1 through D15 shipped. See [BENCHMARKS.md](BENCHMARKS.md) for before/after PGO numbers on Prometheus.
+v0.1.0. See [BENCHMARKS.md](BENCHMARKS.md) for before/after PGO numbers on Prometheus.
 
 ## License
 

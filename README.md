@@ -9,7 +9,7 @@
 Production profiles from your Go services → validated PGO artifacts → optimized builds → safe canary rollouts → cost reports.
 
 ```
-pgoctl collect  --source=parca --url=http://parca:7070 --duration=30
+pgoctl collect  --source=parca --parca-addr=http://parca:7070 --query='process_cpu:cpu:nanoseconds:cpu:nanoseconds{job="myapp"}' --window=5m
 pgoctl validate cpu.pprof
 pgoctl merge    profiles/*.pprof --out default.pgo
 pgoctl explain  default.pgo
@@ -33,20 +33,23 @@ make smoke
 
 ### `pgoctl collect`
 
-Fetch a CPU profile from a running service.
+Fetch a merged CPU profile from a Parca server.
 
 ```
-pgoctl collect --source=parca --url=<base-url> [--duration=30] [--out=cpu.pprof]
+pgoctl collect --source=parca --parca-addr=<base-url> --query=<selector> [--window=5m] [--out=cpu.pprof]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--source` | `parca` | Profiling backend. Currently: `parca` |
-| `--url` | _(required)_ | Base URL of the service (e.g. `http://parca:7070`) |
-| `--duration` | `30` | Collection duration in seconds |
+| `--parca-addr` | _(required)_ | Base URL of the Parca server (e.g. `http://localhost:7070`) |
+| `--query` | _(required)_ | Parca label selector (e.g. `process_cpu:cpu:nanoseconds:cpu:nanoseconds{job="myapp"}`) |
+| `--window` | `5m` | Time window for the merged profile (e.g. `5m`, `1h`) |
 | `--out` | `cpu.pprof` | Output path (`-` for stdout) |
 
-Fetches `/debug/pprof/profile?seconds=<duration>` from the target URL and validates the response is a parseable pprof file before writing.
+Calls `POST /parca.query.v1alpha1.QueryService/MergeProfile` with body `{"start": "…", "end": "…", "query": "…", "reportType": "REPORT_TYPE_PPROF"}`, decodes the base64 `pprof` field from the response, and validates it is a parseable pprof file before writing.
+
+> Collecting directly from a service's `/debug/pprof/profile` endpoint (rather than via Parca) is handled by `demo.sh` and the standalone `cmd/baseline` collector, not by a separate `--source` value.
 
 ---
 
@@ -132,6 +135,53 @@ Exit codes: **0** = promote or neutral, **1** = rollback, **2** = input error.
 
 ---
 
+## GitHub Action
+
+`.github/actions/pgo-action` is a composite Action that runs the full pgoctl pipeline in CI — collect (or reuse an existing profile), validate, and compare against a baseline — then optionally uploads the artifact and posts a verdict comment on the PR.
+
+```yaml
+- uses: better-go-labs/pgoctl/.github/actions/pgo-action@main
+  with:
+    parca-url: http://parca:7070
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Inputs
+
+| Input | Description |
+|-------|-------------|
+| `parca-url` | Parca server URL |
+| `profile-file` | Use an existing pprof (skips collect) |
+| `baseline-profile` | Baseline pprof for the compare step |
+| `duration` | Collection duration |
+| `min-improvement` | Promote threshold (CPU delta %) |
+| `min-regression` | Rollback threshold (CPU regression %) |
+| `validate-flags` | Extra flags passed to `pgoctl validate` |
+| `artifact-name` | Name for the uploaded artifact |
+| `upload-artifact` | Whether to upload the artifact (default: `true`) |
+| `comment-on-pr` | Whether to post a verdict comment (default: `true`) |
+| `github-token` | Token used to post the PR comment |
+
+### Outputs
+
+| Output | Description |
+|--------|-------------|
+| `verdict` | `promote`, `neutral`, or `rollback` |
+| `profile-path` | Path to the collected/used profile |
+| `artifact-path` | Path to the produced artifact |
+| `validate-score` | Quality score from `pgoctl validate` |
+
+## Docker
+
+A multi-stage `Dockerfile` builds a static, non-root image (~10MB).
+
+```bash
+docker build -t pgoctl .
+docker run --rm pgoctl --help
+```
+
+Builder stage: `golang:1.23-alpine`, `CGO_ENABLED=0`, `-trimpath -ldflags="-s -w"`. Runtime stage: `gcr.io/distroless/static-debian12:nonroot`.
+
 ## Configuration
 
 All `pgoctl validate` flags can be set from a config file or environment variable.
@@ -159,6 +209,8 @@ min-package-share:
 
 We benchmark against **Prometheus** — pure Go, pprof-enabled by default, widely deployed on Kubernetes.
 
+`demo.sh` runs the interactive happy-path pipeline. Set `PARCA_URL` to point it at your Parca server (it controls the Parca address used by the collect step).
+
 ## Requirements
 
 - Go 1.23+
@@ -185,13 +237,9 @@ demo.sh               — interactive happy-path demo
 BENCHMARKS.md         — before/after PGO numbers
 ```
 
-## Roadmap
+## Status
 
-| Phase | Focus | Target |
-|-------|-------|--------|
-| Week 1 (D1–D5) | Signal: prove PGO before/after on Prometheus | Aug 2 |
-| Week 2 (D6–D10) | pgoctl CLI: all 5 subcommands | Aug 7 |
-| Week 3 (D11–D15) | GitHub Action + Parca adapter + HN launch | Aug 12 |
+v0.1.0 sprint complete — D1 through D15 shipped. See [BENCHMARKS.md](BENCHMARKS.md) for before/after PGO numbers on Prometheus.
 
 ## License
 

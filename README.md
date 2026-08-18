@@ -16,6 +16,24 @@ pgoctl explain  default.pgo
 pgoctl compare  baseline.pprof candidate.pprof
 ```
 
+## Contents
+
+- [Quick start](#quick-start)
+- [CLI reference](#cli-reference)
+  - [collect — via Parca](#via-parca-continuous-profiling-server)
+  - [collect — via pprof endpoint](#via-go-pprof-http-endpoint)
+  - [validate](#pgoctl-validate)
+  - [merge](#pgoctl-merge)
+  - [explain](#pgoctl-explain)
+  - [compare](#pgoctl-compare)
+- [GitHub Action](#github-action)
+- [Docker](#docker)
+- [Configuration](#configuration)
+- [Requirements](#requirements)
+- [Project layout](#project-layout)
+- [Status](#status)
+- [License](#license)
+
 ## Quick start
 
 ```bash
@@ -33,15 +51,21 @@ make smoke
 
 ### `pgoctl collect`
 
-Fetch a merged CPU profile from a Parca server.
+Fetch a CPU profile from a running service. Two backends are supported.
+
+#### Via Parca (continuous profiling server)
 
 ```
-pgoctl collect --source=parca --parca-addr=<base-url> --query=<selector> [--window=5m] [--out=cpu.pprof]
+pgoctl collect --source=parca \
+  --parca-addr=<base-url> \
+  --query=<selector> \
+  [--window=5m] \
+  [--out=cpu.pprof]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--source` | `parca` | Profiling backend. Currently: `parca` |
+| `--source` | `parca` | Profiling backend (`parca`) |
 | `--parca-addr` | _(required)_ | Base URL of the Parca server (e.g. `http://localhost:7070`) |
 | `--query` | _(required)_ | Parca label selector (e.g. `process_cpu:cpu:nanoseconds:cpu:nanoseconds{job="myapp"}`) |
 | `--window` | `5m` | Time window for the merged profile (e.g. `5m`, `1h`) |
@@ -49,7 +73,20 @@ pgoctl collect --source=parca --parca-addr=<base-url> --query=<selector> [--wind
 
 Calls `POST /parca.query.v1alpha1.QueryService/MergeProfile` with body `{"start": "…", "end": "…", "query": "…", "reportType": "REPORT_TYPE_PPROF"}`, decodes the base64 `pprof` field from the response, and validates it is a parseable pprof file before writing.
 
-> Collecting directly from a service's `/debug/pprof/profile` endpoint (rather than via Parca) is handled by `demo.sh` and the standalone `cmd/baseline` collector, not by a separate `--source` value.
+#### Via Go pprof HTTP endpoint
+
+Any Go service with pprof enabled (`import _ "net/http/pprof"`) exposes a raw CPU profile endpoint. Collect directly with curl and feed it into the pipeline:
+
+```bash
+# Capture a 30s CPU profile from any pprof-enabled service
+curl -o cpu.pprof "http://localhost:6060/debug/pprof/profile?seconds=30"
+
+# Validate and merge as normal
+pgoctl validate cpu.pprof
+pgoctl merge cpu.pprof --out default.pgo
+```
+
+The endpoint is `GET /debug/pprof/profile?seconds=<N>` — standard on any Go binary that imports `net/http/pprof`. The standalone `cmd/baseline` collector wraps this for Prometheus (`make collect-baseline`).
 
 ---
 

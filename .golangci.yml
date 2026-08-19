@@ -16,15 +16,13 @@ linters:
     - gosec
     - unconvert
     - bodyclose
-
-formatters:
-  enable:
-    - gofmt
-    - goimports
-
-issues:
   exclusions:
     rules:
       # CLI tools intentionally accept user-supplied file paths; G304 is expected behaviour
       - linters: [gosec]
         text: "G304:"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

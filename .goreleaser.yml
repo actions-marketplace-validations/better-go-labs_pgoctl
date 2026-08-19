@@ -1,0 +1,39 @@
+version: 2
+
+builds:
+  - main: ./cmd/pgoctl
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - >-
+        -s -w
+        -X 'github.com/Better-Go-Labs/pgoctl/cmd/pgoctl.version={{.Version}}'
+        -X 'github.com/Better-Go-Labs/pgoctl/cmd/pgoctl.commit={{.Commit}}'
+        -X 'github.com/Better-Go-Labs/pgoctl/cmd/pgoctl.date={{.Date}}'
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

@@ -18,7 +18,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.0.1-wip"
+var (
+	version = "0.0.1-wip"
+	commit  = "none"    //nolint:unused
+	date    = "unknown" //nolint:unused
+)
 
 var jsonOutput bool
 
@@ -26,7 +30,7 @@ func main() {
 	root := &cobra.Command{
 		Use:           "pgoctl",
 		Short:         "PGO profile management for Go applications",
-		Version:       version,
+		Version:       fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -123,7 +127,7 @@ func newValidateCmd() *cobra.Command {
 						case "weight-depth":
 							weightDepth = f
 						case "richness-factor":
-							richnessFactor = f
+							richenessFactor = f
 						}
 					}
 					return nil
@@ -157,10 +161,10 @@ func newValidateCmd() *cobra.Command {
 				RichnessFactor:     richnessFactor,
 				PackageShareGates:  gates,
 			}
-			report, err := validate.ValidateFile(args[0], opts)
+			report, err := validate.ValidateFile(args[0], opts) //nolint:gosec
 			if err != nil {
 				if jsonOutput {
-					json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
+					_ = json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
 				} else {
 					fmt.Fprintf(os.Stderr, "error: %s\n", err)
 				}
@@ -211,7 +215,7 @@ func newMergeCmd() *cobra.Command {
 
 			inputs := make([]merge.Input, len(args))
 			for i, path := range args {
-				data, err := os.ReadFile(path)
+				data, err := os.ReadFile(path) //nolint:gosec
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error: read %s: %s\n", path, err)
 					os.Exit(2)
@@ -235,7 +239,7 @@ func newMergeCmd() *cobra.Command {
 			if out == "-" {
 				dst = os.Stdout
 			} else {
-				f, err := os.Create(out)
+				f, err := os.Create(out) //nolint:gosec
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error: create %s: %s\n", out, err)
 					os.Exit(2)
@@ -300,7 +304,7 @@ BOTH profiles before comparing (default 0 = no filtering).`,
 			rpt, err := compare.ProfileFiles(args[0], args[1], gate)
 			if err != nil {
 				if jsonOutput {
-					json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
+					_ = json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
 				} else {
 					fmt.Fprintf(os.Stderr, "error: %s\n", err)
 				}
@@ -309,7 +313,7 @@ BOTH profiles before comparing (default 0 = no filtering).`,
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				enc.Encode(rpt)
+				_ = enc.Encode(rpt)
 			} else {
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				fmt.Fprintf(w, "verdict\t%s\n", rpt.Verdict)
@@ -326,7 +330,7 @@ BOTH profiles before comparing (default 0 = no filtering).`,
 							d.Function, d.BasePct, d.CandPct, d.DeltaPct)
 					}
 				}
-				w.Flush()
+				_ = w.Flush()
 			}
 			if rpt.Verdict == compare.Rollback {
 				os.Exit(1)
@@ -345,7 +349,7 @@ func printQualityReport(report *profiletypes.QualityReport, jsonOutput bool) {
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(report)
+		_ = enc.Encode(report)
 	} else {
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(w, "valid\t%v\n", report.Valid)
@@ -361,6 +365,6 @@ func printQualityReport(report *profiletypes.QualityReport, jsonOutput bool) {
 		for _, wn := range report.Warnings {
 			fmt.Fprintf(w, "warning\t%s\n", wn)
 		}
-		w.Flush()
+		_ = w.Flush()
 	}
 }

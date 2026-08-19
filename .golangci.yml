@@ -1,0 +1,24 @@
+run:
+  timeout: 5m
+
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - revive
+    - gosec
+    - unconvert
+    - bodyclose
+
+issues:
+  exclude-rules:
+    # CLI tools intentionally accept user-supplied file paths; G304 is expected behaviour
+    - linters: [gosec]
+      text: "G304:"

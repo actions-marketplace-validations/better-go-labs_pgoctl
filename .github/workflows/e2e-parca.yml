@@ -1,0 +1,97 @@
+name: e2e / parca-collect
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feat/parca-adapter]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Build pgoctl
+        run: go build -o /tmp/pgoctl ./cmd/pgoctl
+
+      # ── Start Parca ──────────────────────────────────────────────────────────
+      - name: Start Parca
+        run: |
+          docker run -d \
+            --name parca \
+            --network host \
+            ghcr.io/parca-dev/parca:latest \
+            /parca --cors-allowed-origins="*"
+
+      - name: Wait for Parca to be ready
+        run: |
+          echo "Waiting for Parca on :7070..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:7070/metrics >/dev/null 2>&1; then
+              echo "Parca ready after $((i * 2))s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Parca did not become ready"; exit 1
+            fi
+            sleep 2
+          done
+
+      # ── Seed CPU profiles via parca-agent ────────────────────────────────────
+      # parca-agent profiles the host system using eBPF and pushes to Parca.
+      # Privileged + host PID namespace is required for eBPF on GitHub Actions VMs.
+      - name: Run parca-agent (background, 90s)
+        run: |
+          docker run -d \
+            --name parca-agent \
+            --privileged \
+            --pid=host \
+            --network=host \
+            -v /sys:/sys:ro \
+            -v /proc:/proc:ro \
+            ghcr.io/parca-dev/parca-agent:v0.28.0 \
+            --remote-store-address=localhost:7070 \
+            --remote-store-insecure \
+            --node=ci-runner
+
+      - name: Wait for profiles to accumulate (90s)
+        run: sleep 90
+
+      # ── Collect → Validate ───────────────────────────────────────────────────
+      - name: Collect from Parca
+        run: |
+          /tmp/pgoctl collect \
+            --source=parca \
+            --parca-addr=http://localhost:7070 \
+            --query='process_cpu:cpu:nanoseconds:cpu:nanoseconds{}' \
+            --window=2m \
+            --out=/tmp/e2e-collected.pprof
+
+      - name: Validate collected profile
+        run: |
+          /tmp/pgoctl validate \
+            --min-samples 100 \
+            --min-score 0.3 \
+            /tmp/e2e-collected.pprof
+
+      # ── Artifacts ────────────────────────────────────────────────────────────
+      - name: Upload collected profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parca-e2e-profile
+          path: /tmp/e2e-collected.pprof
+          if-no-files-found: ignore
+
+      - name: Dump parca-agent logs on failure
+        if: failure()
+        run: docker logs parca-agent || true

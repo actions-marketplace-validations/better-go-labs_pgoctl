@@ -25,7 +25,9 @@ flowchart LR
 ## Contents
 
 - [Quick start](#quick-start)
-  - [Demo](#demo-requires-a-running-service-or-existing-pprof-file)
+  - [Via pprof endpoint](#via-pprof-endpoint-any-go-service)
+  - [Via Parca](#via-parca-continuous-profiling)
+  - [GitHub Action](#github-action-ci-integration)
   - [Smoke test](#smoke-test-no-external-services-required)
 - [CLI reference](#cli-reference)
   - [collect, via pprof endpoint](#via-go-pprof-http-endpoint)
@@ -45,14 +47,59 @@ flowchart LR
 
 ## Quick start
 
-### Demo (requires a running service or existing pprof file)
+### Via pprof endpoint (any Go service)
+
+Works with any Go service that imports `net/http/pprof`. No Parca required.
+
+```bash
+go build -o bin/pgoctl ./cmd/pgoctl
+
+# Collect a 30s CPU profile
+curl -o cpu.pprof "http://localhost:6060/debug/pprof/profile?seconds=30"
+
+# Validate, merge, and build with PGO
+pgoctl validate cpu.pprof
+pgoctl merge cpu.pprof --out default.pgo
+go build -pgo=default.pgo -o myapp ./cmd/myapp
+```
+
+Or use `demo.sh` with an existing file:
+
+```bash
+PROFILE_FILE=cpu.pprof ./demo.sh
+```
+
+### Via Parca (continuous profiling)
 
 ```bash
 go build -o bin/pgoctl ./cmd/pgoctl
 PARCA_URL=http://localhost:7070 ./demo.sh
 ```
 
-Set `PROFILE_FILE=cpu.pprof ./demo.sh` to skip collect and use an existing file.
+`demo.sh` runs collect, validate, merge, build, and explain end to end against your Parca server.
+
+### GitHub Action (CI integration)
+
+> The Action is currently in this repo and used internally. Once the repo is public it will be
+> referenceable as `better-go-labs/pgoctl/.github/actions/pgo-action@v0.1.0`.
+
+From a pprof endpoint (no Parca needed):
+
+```yaml
+- uses: ./.github/actions/pgo-action
+  with:
+    profile-file: cpu.pprof      # pre-collected pprof; skips the collect step
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+From a Parca server:
+
+```yaml
+- uses: ./.github/actions/pgo-action
+  with:
+    parca-url: http://parca:7070
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
 
 ### Smoke test (no external services required)
 
@@ -118,7 +165,7 @@ pgoctl validate [flags] <path>
 | `--min-samples` | `10000` | Minimum sample count |
 | `--min-duration` | `10.0` | Minimum profile duration in seconds |
 | `--min-score` | `0.6` | Minimum quality score (0-1) |
-| `--min-package-share` | -- | Minimum combined flat CPU % for a package prefix (e.g. `tsdb:5`) |
+| `--min-package-share` | _(none)_ | Minimum combined flat CPU % for a package prefix (e.g. `tsdb:5`) |
 | `--json` | `false` | JSON output |
 
 Exit codes: **0** = valid, **1** = below quality gate, **2** = input error.
@@ -191,19 +238,15 @@ Exit codes: **0** = promote or neutral, **1** = rollback, **2** = input error.
 
 `.github/actions/pgo-action` is a composite Action that runs the full pgoctl pipeline in CI: collect (or reuse an existing profile), validate, and compare against a baseline, then optionally uploads the artifact and posts a verdict comment on the PR.
 
-```yaml
-- uses: better-go-labs/pgoctl/.github/actions/pgo-action@main
-  with:
-    parca-url: http://parca:7070
-    github-token: ${{ secrets.GITHUB_TOKEN }}
-```
+> Currently for use within this repo (`./.github/actions/pgo-action`). Once published publicly,
+> the reference will be `better-go-labs/pgoctl/.github/actions/pgo-action@v0.1.0`.
 
 ### Inputs
 
 | Input | Description |
 |-------|-------------|
-| `parca-url` | Parca server URL |
-| `profile-file` | Use an existing pprof (skips collect) |
+| `parca-url` | Parca server URL (collect step; omit if using `profile-file`) |
+| `profile-file` | Path to a pre-collected pprof file (skips collect) |
 | `baseline-profile` | Baseline pprof for the compare step |
 | `duration` | Collection duration |
 | `min-improvement` | Promote threshold (CPU delta %) |
@@ -242,7 +285,7 @@ All `pgoctl validate` flags can be set from a config file or environment variabl
 |--------|---------|
 | CLI flag | `pgoctl validate --min-score 0.9 cpu.pprof` |
 | Env var | `PGOCTL_MIN_SCORE=0.9 pgoctl validate cpu.pprof` |
-| Config file | `pgoctl.conf` (YAML) — see [pgoctl.conf.example](pgoctl.conf.example) |
+| Config file | `pgoctl.conf` (YAML), see [pgoctl.conf.example](pgoctl.conf.example) |
 
 Precedence: **CLI flag > env var > config file > built-in default**.
 
@@ -261,7 +304,7 @@ min-package-share:
 
 We benchmark against **Prometheus** (pure Go, pprof-enabled by default, widely deployed on Kubernetes).
 
-`demo.sh` runs the interactive happy-path pipeline. Set `PARCA_URL` to point it at your Parca server (it controls the Parca address used by the collect step).
+`demo.sh` runs the interactive happy-path pipeline. Set `PARCA_URL` to point it at your Parca server, or set `PROFILE_FILE` to use an existing pprof and skip collect entirely.
 
 ## Requirements
 
@@ -300,4 +343,4 @@ v0.1.0. See [BENCHMARKS.md](BENCHMARKS.md) for before/after PGO numbers on Prome
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0 (see [LICENSE](LICENSE)).

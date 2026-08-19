@@ -20,8 +20,8 @@ import (
 
 var (
 	version = "0.0.1-wip"
-	commit  = "none"    //nolint:unused
-	date    = "unknown" //nolint:unused
+	commit  = "none"
+	date    = "unknown"
 )
 
 var jsonOutput bool
@@ -127,7 +127,7 @@ func newValidateCmd() *cobra.Command {
 						case "weight-depth":
 							weightDepth = f
 						case "richness-factor":
-							richenessFactor = f
+							richnessFactor = f
 						}
 					}
 					return nil

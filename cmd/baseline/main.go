@@ -42,7 +42,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("fetch: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -67,11 +67,11 @@ func main() {
 	// Uses the same validation pipeline as `pgoctl validate`.
 	report, err := validate.ValidateFile(*out, validate.Options{MinSamples: int64(*minSamples)})
 	if err != nil {
-		os.Remove(*out) // never leave a broken artifact behind
+		_ = os.Remove(*out) // never leave a broken artifact behind
 		log.Fatalf("validate captured profile: %v", err)
 	}
 	if len(report.Errors) > 0 {
-		os.Remove(*out)
+		_ = os.Remove(*out)
 		log.Fatalf("captured profile rejected (%d bytes): %v", len(data), report.Errors)
 	}
 

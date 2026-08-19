@@ -28,6 +28,7 @@ type PackageGroup struct {
 // Verdict is the plain-English PGO readiness assessment.
 type Verdict string
 
+// Verdict values for PGO readiness assessment.
 const (
 	VerdictReady      Verdict = "ready"
 	VerdictBorderline Verdict = "borderline"
@@ -143,7 +144,7 @@ func analyze(path string, p *profile.Profile, topN int) *Report {
 
 // pgoVerdict gives a simple plain-English readiness verdict based on the
 // same signals used by validate: sample count and function diversity.
-func pgoVerdict(p *profile.Profile, cpuTotal int64, uniqueFunctions int) (Verdict, string) {
+func pgoVerdict(p *profile.Profile, _ int64, uniqueFunctions int) (Verdict, string) {
 	samples := int64(len(p.Sample))
 
 	const minSamples = 10000

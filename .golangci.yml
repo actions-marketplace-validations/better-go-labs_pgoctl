@@ -21,6 +21,19 @@ linters:
       # CLI tools intentionally accept user-supplied file paths; G304 is expected behaviour
       - linters: [gosec]
         text: "G304:"
+      # Unix 0755/0644 permissions are standard for CLI tools and test fixtures
+      - linters: [gosec]
+        text: "G301:"
+      - linters: [gosec]
+        text: "G306:"
+      # exec.Command with a variable is standard Go test practice
+      - linters: [gosec]
+        path: "_test\\.go"
+        text: "G204:"
+      # loadgen uses math/rand for synthetic metric noise; crypto-safe random is not needed
+      - linters: [gosec]
+        path: "hack/loadgen/"
+        text: "G404:"
 
 formatters:
   enable:

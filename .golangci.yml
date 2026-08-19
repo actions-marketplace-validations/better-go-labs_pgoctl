@@ -23,7 +23,8 @@ formatters:
     - goimports
 
 issues:
-  exclude-rules:
-    # CLI tools intentionally accept user-supplied file paths; G304 is expected behaviour
-    - linters: [gosec]
-      text: "G304:"
+  exclusions:
+    rules:
+      # CLI tools intentionally accept user-supplied file paths; G304 is expected behaviour
+      - linters: [gosec]
+        text: "G304:"

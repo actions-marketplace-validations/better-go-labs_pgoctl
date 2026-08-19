@@ -205,7 +205,7 @@ func newMergeCmd() *cobra.Command {
 		Use:   "merge <profile...>",
 		Short: "Merge validated CPU profiles into a default.pgo artifact",
 		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			opts := merge.Options{
 				Strategy:      merge.Strategy(strategy),
 				RecencyWeight: recencyWeight,
@@ -244,7 +244,7 @@ func newMergeCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "error: create %s: %s\n", out, err)
 					os.Exit(2)
 				}
-				defer f.Close()
+				defer func() { _ = f.Close() }()
 				dst = f
 			}
 			if _, err := dst.Write(buf.Bytes()); err != nil {
@@ -294,7 +294,7 @@ Verdict:
 --min-cpu-percent drops functions whose CPU share is below the given %% in
 BOTH profiles before comparing (default 0 = no filtering).`,
 		Args: cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			gate := compare.GateConfig{
 				MinCPUImprovement: minImprovement,
 				MinCPURegression:  minRegression,

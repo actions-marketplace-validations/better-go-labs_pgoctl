@@ -13,6 +13,7 @@ func newCollectCmd() *cobra.Command {
 	var source string
 	var parcaAddr string
 	var query string
+	var url string
 	var window time.Duration
 	var timeout time.Duration
 	var out string
@@ -24,23 +25,34 @@ func newCollectCmd() *cobra.Command {
 			if source == "" {
 				return fmt.Errorf("--source is required")
 			}
-			if collect.Source(source) != collect.SourceParca {
-				return fmt.Errorf("unsupported source %q: only %q is supported", source, collect.SourceParca)
-			}
-			if query == "" {
-				return fmt.Errorf("--query is required when source=parca")
-			}
 
 			opts := collect.Options{
 				Source:    collect.Source(source),
 				ParcaAddr: parcaAddr,
 				Query:     query,
+				URL:       url,
 				Window:    window,
 				Timeout:   timeout,
 				Out:       out,
 			}
 
-			result, err := collect.CollectFromParca(opts)
+			var result *collect.Result
+			var err error
+
+			switch collect.Source(source) {
+			case collect.SourceParca:
+				if query == "" {
+					return fmt.Errorf("--query is required when source=parca")
+				}
+				result, err = collect.CollectFromParca(opts)
+			case collect.SourcePprof:
+				if url == "" {
+					return fmt.Errorf("--url is required when source=pprof")
+				}
+				result, err = collect.CollectFromPprof(opts)
+			default:
+				return fmt.Errorf("unsupported source %q: supported sources are parca, pprof", source)
+			}
 			if err != nil {
 				return err
 			}
@@ -55,11 +67,12 @@ func newCollectCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&source, "source", "", "profile source (required): parca")
+	cmd.Flags().StringVar(&source, "source", "", "profile source (required): parca | pprof")
 	cmd.Flags().StringVar(&parcaAddr, "parca-addr", "http://localhost:7070", "Parca server address")
 	cmd.Flags().StringVar(&query, "query", "", "Parca profile selector (required when source=parca)")
+	cmd.Flags().StringVar(&url, "url", "", "full URL for pprof HTTP endpoint (required when source=pprof)")
 	cmd.Flags().DurationVar(&window, "window", 5*time.Minute, "lookback window duration")
-	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Second, "HTTP request timeout")
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "HTTP request timeout (default: source-specific)")
 	cmd.Flags().StringVar(&out, "out", "cpu.pprof", "output file path")
 
 	return cmd

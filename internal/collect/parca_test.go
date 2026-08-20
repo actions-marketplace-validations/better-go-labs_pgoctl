@@ -16,7 +16,7 @@ func TestCollectFromParca_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(mergeResponse{
+		_ = json.NewEncoder(w).Encode(mergeResponse{
 			Pprof: base64.StdEncoding.EncodeToString(fakeData),
 		})
 	}))
@@ -39,7 +39,7 @@ func TestCollectFromParca_Success(t *testing.T) {
 func TestCollectFromParca_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("service unavailable"))
+		_, _ = w.Write([]byte("service unavailable"))
 	}))
 	defer srv.Close()
 
@@ -60,7 +60,7 @@ func TestCollectFromParca_EmptyProfile(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(mergeResponse{Pprof: ""})
+		_ = json.NewEncoder(w).Encode(mergeResponse{Pprof: ""})
 	}))
 	defer srv.Close()
 

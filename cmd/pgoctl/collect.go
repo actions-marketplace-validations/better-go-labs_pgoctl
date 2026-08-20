@@ -61,7 +61,7 @@ func newCollectCmd() *cobra.Command {
 				return fmt.Errorf("write %s: %w", opts.Out, err)
 			}
 
-			fmt.Fprintf(os.Stderr, "collected %d bytes → %s (source=%s, window=%s)\n",
+			_, _ = fmt.Fprintf(os.Stderr, "collected %d bytes → %s (source=%s, window=%s)\n",
 				result.SizeBytes, opts.Out, source, window)
 			return nil
 		},

@@ -3,7 +3,9 @@ package collect
 import (
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -14,8 +16,22 @@ func CollectFromPprof(opts Options) (*Result, error) {
 	if timeout == 0 {
 		timeout = 120 * time.Second
 	}
+
+	rawURL := opts.URL
+	if opts.Window > 0 {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return nil, fmt.Errorf("collect pprof: parse url: %w", err)
+		}
+		q := u.Query()
+		q.Set("seconds", fmt.Sprintf("%d", int(math.Round(opts.Window.Seconds()))))
+		u.RawQuery = q.Encode()
+		rawURL = u.String()
+	}
+
 	client := &http.Client{Timeout: timeout}
-	resp, err := client.Get(opts.URL)
+	start := time.Now()
+	resp, err := client.Get(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("collect pprof: get %s: %w", opts.URL, err)
 	}
@@ -30,12 +46,11 @@ func CollectFromPprof(opts Options) (*Result, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("collect pprof: endpoint returned empty profile")
 	}
-	now := time.Now()
 	return &Result{
 		Bytes:     data,
 		Source:    SourcePprof,
-		Start:     now,
-		End:       now,
+		Start:     start,
+		End:       time.Now(),
 		SizeBytes: len(data),
 	}, nil
 }

@@ -29,7 +29,7 @@ jobs:
           docker run -d \
             --name parca \
             --network host \
-            ghcr.io/parca-dev/parca:latest \
+            ghcr.io/parca-dev/parca:v0.28.0 \
             /parca --cors-allowed-origins="*"
 
       - name: Wait for Parca to be ready
@@ -58,7 +58,7 @@ jobs:
             --network=host \
             -v /sys:/sys:ro \
             -v /proc:/proc:ro \
-            ghcr.io/parca-dev/parca-agent:v0.28.0 \
+            ghcr.io/parca-dev/parca-agent:v0.49.0 \
             --remote-store-address=localhost:7070 \
             --remote-store-insecure \
             --node=ci-runner

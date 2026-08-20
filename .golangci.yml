@@ -16,6 +16,12 @@ linters:
     - gosec
     - unconvert
     - bodyclose
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
   exclusions:
     rules:
       # CLI tools intentionally accept user-supplied file paths; G304 is expected behaviour

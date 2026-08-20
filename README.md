@@ -4,7 +4,7 @@
 [![CI](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml/badge.svg)](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Better-Go-Labs/pgoctl)](https://goreportcard.com/report/github.com/Better-Go-Labs/pgoctl)
 [![pkg.go.dev](https://pkg.go.dev/badge/github.com/Better-Go-Labs/pgoctl.svg)](https://pkg.go.dev/github.com/Better-Go-Labs/pgoctl)
-[![Go 1.21+](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org/dl/)
+[![Go 1.26+](https://img.shields.io/badge/go-1.26+-blue.svg)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/better-go-labs/pgoctl)](https://github.com/better-go-labs/pgoctl/releases/latest)
 [![Smoke](https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml/badge.svg)](https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml)
@@ -315,7 +315,7 @@ We benchmark against **Prometheus** (pure Go, pprof-enabled by default, widely d
 
 ### Required
 
-- Go 1.21+ (PGO support stable since 1.21; this module requires Go 1.23 per `go.mod`)
+- Go 1.26+ (per `go.mod`)
 
 ### Optional (local dev cluster and benchmarking)
 

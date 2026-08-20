@@ -1,3 +1,4 @@
+// Package compare provides CPU profile comparison and gate verdict computation.
 package compare
 
 import (
@@ -12,6 +13,7 @@ import (
 // Verdict is the gate decision.
 type Verdict string
 
+// Verdict values returned by the gate evaluation.
 const (
 	Promote  Verdict = "promote"
 	Rollback Verdict = "rollback"
@@ -44,6 +46,7 @@ type GateConfig struct {
 	TopN              int     // number of function deltas to include in output
 }
 
+// DefaultGateConfig returns a GateConfig with sensible default thresholds.
 func DefaultGateConfig() GateConfig {
 	return GateConfig{MinCPUImprovement: 10.0, MinCPURegression: 10.0, TopN: 10}
 }

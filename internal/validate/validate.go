@@ -1,3 +1,4 @@
+// Package validate scores CPU pprof profiles for PGO readiness.
 package validate
 
 import (
@@ -154,6 +155,7 @@ func gatePackageShare(shares map[string]float64, prefix string) float64 {
 	return combined
 }
 
+// Options configures the quality thresholds applied to a CPU pprof.
 type Options struct {
 	MinSamples         int64
 	MinDurationSeconds float64 // seconds
@@ -169,6 +171,7 @@ type Options struct {
 	PackageShareGates  []PackageShareGate
 }
 
+// DefaultOptions returns Options with sensible defaults for production profiles.
 func DefaultOptions() Options {
 	return Options{
 		MinSamples:         10000,
@@ -192,7 +195,7 @@ func clamp(v float64) float64 {
 // ValidateFile parses path and returns a QualityReport.
 // error is non-nil only on I/O or parse failure (caller should exit 2).
 // report.Valid==false with error==nil means below threshold (caller exits 1).
-func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error) {
+func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error) { //nolint:revive // public API rename out of scope
 	if opts.TargetSamples == 0 {
 		opts.TargetSamples = targetSamples
 	}

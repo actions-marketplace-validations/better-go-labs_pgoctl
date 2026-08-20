@@ -143,7 +143,7 @@ func send(client *http.Client, url string, req *prompb.WriteRequest, samples, re
 		*errors++
 		return
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.Printf("non-2xx response: %s", resp.Status)
 		*errors++

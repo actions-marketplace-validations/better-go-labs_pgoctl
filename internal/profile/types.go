@@ -1,7 +1,11 @@
+// Package profile defines shared types for pprof profile metadata and quality reports.
 package profile
 
 import "time"
 
+// ProfileMeta holds metadata describing a captured pprof file.
+//
+//nolint:revive // profile.ProfileMeta is the established name; renaming is out of scope
 type ProfileMeta struct {
 	Path         string        `json:"path"`
 	Service      string        `json:"service"`
@@ -13,6 +17,7 @@ type ProfileMeta struct {
 	SHA256       string        `json:"sha256"`
 }
 
+// QualityReport is the output of a pgoctl validate run.
 type QualityReport struct {
 	Valid         bool               `json:"valid"`
 	QualityScore  float64            `json:"quality_score"`

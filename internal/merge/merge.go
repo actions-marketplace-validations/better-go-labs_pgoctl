@@ -1,3 +1,4 @@
+// Package merge implements profile merging strategies for pgoctl.
 package merge
 
 import (
@@ -9,14 +10,17 @@ import (
 	"github.com/google/pprof/profile"
 )
 
+// Strategy selects how profiles are merged.
 type Strategy string
 
+// Merge strategy constants.
 const (
 	Weighted Strategy = "weighted"
 	Latest   Strategy = "latest"
 	Union    Strategy = "union"
 )
 
+// Options configures the merge operation.
 type Options struct {
 	Strategy      Strategy
 	RecencyWeight float64
@@ -24,6 +28,7 @@ type Options struct {
 	DropInvalid   bool
 }
 
+// DefaultOptions returns Options with sensible defaults.
 func DefaultOptions() Options {
 	return Options{
 		Strategy:      Weighted,

@@ -47,7 +47,7 @@ func writeTempProfile(t *testing.T, p *profile.Profile) string {
 	t.Helper()
 	f, err := os.CreateTemp("", "gate*.pprof")
 	require.NoError(t, err)
-	t.Cleanup(func() { os.Remove(f.Name()) })
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
 	require.NoError(t, p.Write(f))
 	require.NoError(t, f.Close())
 	return f.Name()

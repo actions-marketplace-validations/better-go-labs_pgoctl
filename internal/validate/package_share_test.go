@@ -231,7 +231,7 @@ func TestValidateFile_PackageShareGate_NoCPUSampleType(t *testing.T) {
 func TestValidateFile_PackageShareGate_MalformedFile(t *testing.T) {
 	f, err := os.CreateTemp("", "bad*.pprof")
 	require.NoError(t, err)
-	t.Cleanup(func() { os.Remove(f.Name()) })
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
 	_, err = f.WriteString("not a pprof file")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())

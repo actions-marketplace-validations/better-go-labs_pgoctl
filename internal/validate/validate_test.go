@@ -16,7 +16,7 @@ import (
 func generateCPUProfile(t *testing.T, durationMs int) []byte {
 	f, err := os.CreateTemp("", "cpu*.pprof")
 	require.NoError(t, err)
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 	defer func() { _ = f.Close() }()
 
 	err = pprof.StartCPUProfile(f)
@@ -67,7 +67,7 @@ func TestValidate_TableDriven(t *testing.T) {
 				return f.Name()
 			},
 			teardown: func(_ *testing.T, path string) {
-				os.Remove(path)
+				_ = os.Remove(path)
 			},
 			opts: func() validate.Options {
 				o := validate.DefaultOptions()
@@ -87,7 +87,7 @@ func TestValidate_TableDriven(t *testing.T) {
 			setup: func(_ *testing.T) string {
 				return "/nonexistent/path/does/not/exist.pprof"
 			},
-			teardown:    func(_ *testing.T, path string) {},
+			teardown:    func(_ *testing.T, _ string) {},
 			opts:        validate.DefaultOptions(),
 			expectValid: false,
 			expectError: true,
@@ -99,11 +99,11 @@ func TestValidate_TableDriven(t *testing.T) {
 				require.NoError(t, err)
 				_, err = f.WriteString("not a pprof file")
 				require.NoError(t, err)
-				f.Close()
+				_ = f.Close()
 				return f.Name()
 			},
-			teardown: func(t *testing.T, path string) {
-				os.Remove(path)
+			teardown: func(_ *testing.T, path string) {
+				_ = os.Remove(path)
 			},
 			opts:        validate.DefaultOptions(),
 			expectValid: false,
@@ -116,11 +116,11 @@ func TestValidate_TableDriven(t *testing.T) {
 				require.NoError(t, err)
 				_, err = f.Write(validData)
 				require.NoError(t, err)
-				f.Close()
+				_ = f.Close()
 				return f.Name()
 			},
-			teardown: func(t *testing.T, path string) {
-				os.Remove(path)
+			teardown: func(_ *testing.T, path string) {
+				_ = os.Remove(path)
 			},
 			opts: func() validate.Options {
 				o := validate.DefaultOptions()
@@ -141,10 +141,10 @@ func TestValidate_TableDriven(t *testing.T) {
 				require.NoError(t, err)
 				_, err = f.Write(validData)
 				require.NoError(t, err)
-				f.Close()
+				_ = f.Close()
 				return f.Name()
 			},
-			teardown: func(t *testing.T, path string) { os.Remove(path) },
+			teardown: func(_ *testing.T, path string) { _ = os.Remove(path) },
 			opts: func() validate.Options {
 				o := validate.DefaultOptions()
 				o.MinSamples = 1

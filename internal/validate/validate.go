@@ -1,3 +1,4 @@
+// Package validate scores CPU pprof profiles for PGO readiness.
 package validate
 
 import (
@@ -194,8 +195,7 @@ func clamp(v float64) float64 {
 // ValidateFile parses path and returns a QualityReport.
 // error is non-nil only on I/O or parse failure (caller should exit 2).
 // report.Valid==false with error==nil means below threshold (caller exits 1).
-//nolint:revive // public API; renaming ValidateFile to File is out of scope for this PR
-func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error) {
+func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error) { //nolint:revive // public API rename out of scope
 	if opts.TargetSamples == 0 {
 		opts.TargetSamples = targetSamples
 	}

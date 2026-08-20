@@ -1,3 +1,4 @@
+// Package explain analyzes pprof files and emits PGO readiness verdicts.
 package explain
 
 import (

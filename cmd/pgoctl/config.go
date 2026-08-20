@@ -1,3 +1,4 @@
+// Package main is the pgoctl command-line tool for PGO profile management.
 package main
 
 import (

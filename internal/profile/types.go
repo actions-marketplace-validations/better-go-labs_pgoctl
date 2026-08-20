@@ -4,6 +4,8 @@ package profile
 import "time"
 
 // ProfileMeta holds metadata describing a captured pprof file.
+//
+//nolint:revive // profile.ProfileMeta is the established name; renaming is out of scope
 type ProfileMeta struct {
 	Path         string        `json:"path"`
 	Service      string        `json:"service"`

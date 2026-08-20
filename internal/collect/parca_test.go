@@ -11,6 +11,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCollectFromParca_ConnectProtocolHeader(t *testing.T) {
+	fakeData := []byte("FAKE_PPROF_DATA")
+	var gotContentType, gotConnectVersion string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		gotConnectVersion = r.Header.Get("Connect-Protocol-Version")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(mergeResponse{
+			Pprof: base64.StdEncoding.EncodeToString(fakeData),
+		})
+	}))
+	defer srv.Close()
+
+	opts := Options{
+		Source:    SourceParca,
+		ParcaAddr: srv.URL,
+		Query:     "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+		Window:    5 * time.Minute,
+		End:       time.Now(),
+		Timeout:   5 * time.Second,
+	}
+	_, err := CollectFromParca(opts)
+	require.NoError(t, err)
+	require.Equal(t, "application/json", gotContentType)
+	require.Equal(t, "1", gotConnectVersion)
+}
+
 func TestCollectFromParca_Success(t *testing.T) {
 	fakeData := []byte("FAKE_PPROF_DATA")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

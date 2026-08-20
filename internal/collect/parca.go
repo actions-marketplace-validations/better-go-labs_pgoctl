@@ -2,6 +2,7 @@ package collect
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -50,7 +51,13 @@ func CollectFromParca(opts Options) (*Result, error) {
 
 	url := opts.ParcaAddr + "/parca.query.v1alpha1.QueryService/MergeProfile"
 	httpClient := &http.Client{Timeout: timeout}
-	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("collect parca: create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Connect-Protocol-Version", "1")
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("collect parca: post %s: %w", url, err)
 	}

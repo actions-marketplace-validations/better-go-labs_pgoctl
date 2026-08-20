@@ -6,6 +6,10 @@ inputs:
     description: 'Base URL of the running Parca instance (e.g. http://parca:7070)'
     required: false
     default: ''
+  pprof-url:
+    description: 'Base URL of a Go pprof HTTP endpoint (e.g. http://localhost:6060)'
+    required: false
+    default: ''
   profile-file:
     description: 'Path to an existing pprof file (skip collect step)'
     required: false
@@ -68,7 +72,7 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    # ── install pgoctl ──────────────────────────────────────────────────
+    # ── install pgoctl ────────────────────────────────────────────────
     - name: Install pgoctl
       shell: bash
       run: |
@@ -81,7 +85,7 @@ runs:
           echo "$RUNNER_TOOL_CACHE" >> "$GITHUB_PATH"
         fi
 
-    # ── collect or copy profile ─────────────────────────────────────────
+    # ── collect or copy profile ─────────────────────────────────────
     - name: Collect profile
       id: collect
       shell: bash
@@ -96,13 +100,19 @@ runs:
             --url="${{ inputs.parca-url }}" \
             --duration="${{ inputs.duration }}" \
             --out=cpu.pprof
+        elif [[ -n "${{ inputs.pprof-url }}" ]]; then
+          echo "Collecting ${{ inputs.duration }}s CPU profile from ${{ inputs.pprof-url }}"
+          pgoctl collect \
+            --source=pprof \
+            --url="${{ inputs.pprof-url }}/debug/pprof/profile?seconds=${{ inputs.duration }}" \
+            --out=cpu.pprof
         else
-          echo "Error: either parca-url or profile-file must be provided" >&2
+          echo "Error: one of profile-file, parca-url, or pprof-url must be provided" >&2
           exit 2
         fi
         echo "profile=cpu.pprof" >> "$GITHUB_OUTPUT"
 
-    # ── validate ─────────────────────────────────────────────────────────
+    # ── validate ─────────────────────────────────────────────────────
     - name: Validate profile
       id: validate
       shell: bash
@@ -121,7 +131,7 @@ runs:
           exit $exit_code
         fi
 
-    # ── merge → default.pgo ──────────────────────────────────────────────
+    # ── merge → default.pgo ────────────────────────────────────────────
     - name: Merge profiles
       id: merge
       shell: bash
@@ -129,7 +139,7 @@ runs:
         pgoctl merge cpu.pprof --out=default.pgo
         echo "artifact=default.pgo" >> "$GITHUB_OUTPUT"
 
-    # ── resolve output paths ──────────────────────────────────────────────
+    # ── resolve output paths ──────────────────────────────────────────
     - name: Set output paths
       id: paths
       shell: bash
@@ -137,7 +147,7 @@ runs:
         echo "profile=$(pwd)/cpu.pprof" >> "$GITHUB_OUTPUT"
         echo "artifact=$(pwd)/default.pgo" >> "$GITHUB_OUTPUT"
 
-    # ── compare against baseline (optional) ──────────────────────────────
+    # ── compare against baseline (optional) ────────────────────────────
     - name: Compare profiles
       id: compare
       if: inputs.baseline-profile != ''
@@ -161,7 +171,7 @@ runs:
           exit $exit_code
         fi
 
-    # ── upload artifact ───────────────────────────────────────────────────
+    # ── upload artifact ─────────────────────────────────────────────────
     - name: Upload PGO artifact
       if: inputs.upload-artifact == 'true'
       uses: actions/upload-artifact@v4

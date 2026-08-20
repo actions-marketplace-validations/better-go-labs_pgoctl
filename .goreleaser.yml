@@ -7,9 +7,9 @@ builds:
     ldflags:
       - >-
         -s -w
-        -X 'github.com/Better-Go-Labs/pgoctl/cmd/pgoctl.version={{.Version}}'
-        -X 'github.com/Better-Go-Labs/pgoctl/cmd/pgoctl.commit={{.Commit}}'
-        -X 'github.com/Better-Go-Labs/pgoctl/cmd/pgoctl.date={{.Date}}'
+        -X main.version={{.Version}}
+        -X main.commit={{.Commit}}
+        -X main.date={{.Date}}
     goos:
       - linux
       - darwin

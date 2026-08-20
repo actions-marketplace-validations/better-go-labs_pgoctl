@@ -1,3 +1,4 @@
+// Package validate scores CPU pprof profiles for PGO readiness.
 package validate
 
 import (
@@ -113,13 +114,13 @@ func computePackageShares(p *profile.Profile) (map[string]float64, error) {
 		}
 		v := s.Value[idx]
 		total += v
-		// Leaf function = innermost frame (last location, last line).
-		for i := len(s.Location) - 1; i >= 0; i-- {
-			loc := s.Location[i]
+		// Leaf function = Location[0] per pprof convention (innermost frame first).
+		// Location[0].Line[0] is the deepest inlined frame within that location.
+		for _, loc := range s.Location {
 			if loc == nil || len(loc.Line) == 0 {
 				continue
 			}
-			fn := loc.Line[len(loc.Line)-1].Function
+			fn := loc.Line[0].Function
 			if fn != nil && fn.Name != "" {
 				funcTotal[fn.Name] += v
 				break
@@ -154,6 +155,7 @@ func gatePackageShare(shares map[string]float64, prefix string) float64 {
 	return combined
 }
 
+// Options configures the quality thresholds applied to a CPU pprof.
 type Options struct {
 	MinSamples         int64
 	MinDurationSeconds float64 // seconds
@@ -169,6 +171,7 @@ type Options struct {
 	PackageShareGates  []PackageShareGate
 }
 
+// DefaultOptions returns Options with sensible defaults for production profiles.
 func DefaultOptions() Options {
 	return Options{
 		MinSamples:         10000,
@@ -192,7 +195,7 @@ func clamp(v float64) float64 {
 // ValidateFile parses path and returns a QualityReport.
 // error is non-nil only on I/O or parse failure (caller should exit 2).
 // report.Valid==false with error==nil means below threshold (caller exits 1).
-func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error) {
+func ValidateFile(path string, opts Options) (*profiletypes.QualityReport, error) { //nolint:revive // public API rename out of scope
 	if opts.TargetSamples == 0 {
 		opts.TargetSamples = targetSamples
 	}

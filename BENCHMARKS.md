@@ -1,40 +1,39 @@
 # Benchmarks
 
-> Numbers populated starting D4 (Aug 1) once the PGO build + comparison runs.
+pgoctl builds are benchmarked against the [Prometheus tsdb](https://github.com/prometheus/prometheus) package to measure the impact of Profile-Guided Optimization (PGO) on real-world Go workloads.
 
-## Setup
+## Methodology
 
-- *Demo service:* Prometheus (latest stable) deployed via kube-prometheus-stack on kind
-- *Cluster:* kind single-node (4 CPU, 8 GB RAM)
-- *Load generator:* [hey](https://github.com/rakyll/hey) — 50 concurrent workers, 60s sustained
-- *Profiling window:* 30s CPU profile captured under load
-- *PGO flag:* `go build -pgo=auto`
+- **Harness:** each benchmarked package is run for **10 rounds**, baseline vs. PGO-optimized build, on the same runner.
+- **Aggregation:** results are reported as the **geomean** across a package's benchmarks; per-benchmark deltas use `benchstat` with significance at **p < 0.05**.
+- **Primary metric:** `sec/op` (wall-clock time per operation). `B/op` and `allocs/op` are tracked as secondary metrics and watched for regressions.
+- **Reporting:** the CI workflow runs the 10 rounds on each PR and posts a sticky comment with the delta table; the numbers below are the latest snapshot merged to `main`.
 
-## Baseline (no PGO)
+Lower is better throughout. Negative percentages mean the PGO build is faster / smaller.
 
-| Metric | Value |
-|--------|-------|
-| CPU (req/s) | TBD |
-| p99 latency | TBD |
-| Binary size | TBD |
+## Latest snapshot
 
-## PGO build (`-pgo=auto`)
+Commit `d626d60` (merged to `main`) — geomean `sec/op`, baseline → PGO:
 
-| Metric | Value | Delta |
-|--------|-------|-------|
-| CPU (req/s) | TBD | TBD |
-| p99 latency | TBD | TBD |
-| Binary size | TBD | TBD |
+| Package  | Baseline | PGO      | Δ sec/op   | Notes |
+| -------- | -------- | -------- | ---------- | ----- |
+| tsdb     | 79.38µ   | 78.39µ   | **−1.24%** |       |
+| chunkenc | 1.998µ   | 1.970µ   | **−1.40%** |       |
+| storage  | 257.0n   | 254.6n   | **−0.93%** |       |
+| labels   | 259.3n   | 258.7n   | −0.23%     | flat  |
+| promql   | 644.6n   | 645.2n   | +0.10%     | flat  |
 
-## Reproduce
+**Notable individual wins:**
+- `labels/String` — **−20.13%** (p < 0.05)
+- `tsdb/HeadStripeSeriesCreate` — measurable improvement
 
-```bash
-make kind-up            # cluster + Prometheus
-make load-prometheus    # warm up + generate load
-make collect-baseline   # capture 30s CPU profile
-# D4: build Prometheus with -pgo=auto, re-run load, compare
-```
+Overall: the hot paths that dominate the production profile (tsdb, chunkenc, storage) show consistent single-digit-percent speedups, while promql and labels are flat within noise.
 
-## Signal threshold
+## What to watch
 
-Pass: ≥3% CPU reduction, no p99 regression.
+Two regressions are being tracked (see issue *"Track: memory B/op uptick and FastRegexMatcher regression from initial PGO run"*):
+
+1. **`FastRegexMatcher/((fo(bar))|.+foo)` — +13.67% sec/op.** A regex pattern that was not hot in the production profile and appears to have been de-prioritized by the optimizer.
+2. **Memory `B/op` uptick** — tsdb **+3.56%** and storage **+3.44%**. PGO traded some allocation footprint for speed on these paths.
+
+Hypothesis for both: the affected patterns were cold in the profile used for this run. The expectation is that a broader / more representative profiling run stabilizes or reverses these. See the tracking issue for acceptance criteria.

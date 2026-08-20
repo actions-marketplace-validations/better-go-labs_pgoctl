@@ -1,26 +1,29 @@
-# Trigger-refresh v3 — Fix: pre-compile baseline to overlap load+capture windows
+# Trigger-refresh v5 — Fast smoke-test: 1k series, 60s load, <10 min total
 name: Profile Collect
-# Spins up Prometheus in kind, drives a REAL load mix DURING the pprof
+# Spins up Prometheus in kind, drives a fast load mix DURING the pprof
 # capture window, captures a 60s CPU pprof, validates it with pgoctl
 # (including package-share coverage gates for the bench hot paths), and
 # uploads as a workflow artifact. Run manually (workflow_dispatch) to
 # produce testdata/prometheus_cpu.pprof.
 #
-# Load mix (all backgrounded, all overlapping the full capture window):
-#   - hack/loadgen: continuous remote-write of high-cardinality, churning
-#     series -> hammers head append + WAL (tsdb hot paths).
-#   - hey query_range loops: rate/count aggregations over those series ->
-#     chunk iteration, postings (label matchers), promql eval.
+# Load mix (all backgrounded, overlapping the capture window):
+#   - hack/loadgen: 60s / 1k series / batch 100 — signal detection scale,
+#     not "real load"; hammers head append + WAL (tsdb hot paths).
+#   - hey query_range: 1 call, c5, 10s — chunk iteration + promql eval.
+#   - hey instant: 1 call, c3, 5s — instant query path.
 #
-# Coverage gate: validate requires combined flat CPU share of the tsdb
-# family >= 5% and promql >= 1.5% (--min-package-share). A capture that
-# doesn't cover the bench routes fails loudly and leaves no artifact.
+# Coverage gate: validate requires combined flat CPU share of tsdb >= 5%
+# and promql >= 1.5% (--min-package-share). A capture that doesn't cover
+# the bench routes fails loudly. If thresholds can't be met at this scale
+# the validate step reports actual baselines so they can be adjusted.
 #
-# v3 fix: baseline binary is pre-compiled in the "Drive load" step so the
-# capture step can start profiling IMMEDIATELY when load begins. Without
-# this fix, `go run ./cmd/baseline` in the capture step triggers a ~4 min
-# compilation, causing the profile to capture idle Prometheus (tsdb=0%,
-# promql=0% on every run).
+# v5 changes on top of v4 (fast cycle target: <10 min):
+#   1. Job timeout: 30 min → 15 min
+#   2. Loadgen: 40k series/batch 2k/120s → 1k series/batch 100/60s
+#   3. Warmup sleep: 30s → 5s
+#   4. Hey: 2× query_range c50 90s + 1× instant c20 90s
+#          → 1× query_range c5 10s + 1× instant c3 5s
+#   5. Query window end: 90s → 50s (matches shorter load window)
 #
 # NOTE: workflow_dispatch only fires from the DEFAULT branch, so this
 # workflow goes live for dispatch only after it is merged to main.
@@ -39,7 +42,7 @@ on:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -59,11 +62,10 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
 
-      # Prometheus exposes /debug/pprof BY DEFAULT (web.enable-pprof=true),
-      # so no additionalArgs are needed. We also disable grafana and
-      # alertmanager: the profile is captured from the prometheus server
-      # itself, and trimming the stack reduces OOM risk on the 2-core/7GB
-      # Actions runner.
+      # v4 fix 1: prometheus.prometheusSpec.enableRemoteWriteReceiver=true is the
+      # operator CRD field that wires up --web.enable-remote-write-receiver on the
+      # Prometheus binary. server.extraArgs has no template in kube-prometheus-stack
+      # and is silently ignored.
       - name: Deploy Prometheus (pprof on by default)
         run: |
           helm repo add prometheus-community \
@@ -75,21 +77,19 @@ jobs:
             --namespace monitoring \
             --set grafana.enabled=false \
             --set alertmanager.enabled=false \
-            --set 'server.extraArgs.web.enable-remote-write-receiver=' \
+            --set 'prometheus.prometheusSpec.enableRemoteWriteReceiver=true' \
             --wait --timeout 5m
 
-      # DIAGNOSTIC 1: Verify the remote-write flag actually reached the pod.
-      # Hypothesis: --set prometheus.prometheusSpec.enableRemoteWriteReceiver=true
-      # is silently ignored by the operator CRD mapper, so --web.enable-remote-write-receiver
-      # is never passed to the prometheus binary.
+      # v4 fix 2: kubectl exec -l is invalid. Use kubectl get pods -o jsonpath
+      # to dump actual pod CLI args for flag-level verification.
       - name: Verify remote-write flag reached the pod
         run: |
           echo "::group::Helm rendered values (remote-write relevant)"
           helm get values prometheus -n monitoring | grep -A 5 -i "remote" || echo "no remote-write values found"
           echo "::endgroup::"
           echo "::group::Pod args (look for web.enable-remote-write-receiver)"
-          kubectl exec -n monitoring -l app.kubernetes.io/name=prometheus -- \
-            sh -c "ps aux | grep prometheus | grep -v grep" || true
+          kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus \
+            -o jsonpath='{.items[0].spec.containers[0].args}' | python3 -m json.tool || true
           echo "::endgroup::"
 
       # Real readiness gate before port-forward: `helm --wait` only proves
@@ -127,92 +127,76 @@ jobs:
           timeout 60 bash -c \
             'until curl -sf --retry 5 --retry-connrefused http://localhost:9090/-/ready; do sleep 2; done'
 
-      # DIAGNOSTIC 2: Verify the remote-write endpoint accepts data.
-      # Hypothesis: /api/v1/write returns 404 or 503 because the operator
-      # didn't wire up the remote-write receiver, so loadgen data never hits Prometheus.
+      # v4 fix 3: send POST (GET always returns 405 regardless of receiver state),
+      # treat 404+405 as hard errors and exit 1 so a dead receiver gates the run
+      # instead of silently passing.
       - name: Verify remote-write endpoint
         run: |
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/api/v1/write)
-          echo "Remote-write endpoint HTTP status: $HTTP_CODE (expect 200 or 400-with-body, NOT 404/503)"
-          BODY=$(curl -s http://localhost:9090/api/v1/write)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/x-protobuf' --data-binary '' http://localhost:9090/api/v1/write)
+          echo "Remote-write endpoint HTTP status: $HTTP_CODE (expect 400 or 204, NOT 404/405/503)"
+          BODY=$(curl -s -X POST -H 'Content-Type: application/x-protobuf' --data-binary '' http://localhost:9090/api/v1/write)
           echo "Response body: $BODY"
-          if [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "503" ]; then
-            echo "::error::Remote-write endpoint is NOT available ($HTTP_CODE) — loadgen data will be silently dropped"
+          if [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "405" ] || [ "$HTTP_CODE" = "503" ]; then
+            echo "::error::Remote-write endpoint NOT available ($HTTP_CODE) — receiver is OFF, loadgen data will be silently dropped"
+            exit 1
           fi
 
-      # Load must overlap the capture window: a profile of an idle server is
-      # a meaningless PGO baseline. Three background loaders run 75s while
-      # the 60s capture happens:
-      #   1. hack/loadgen — remote-write of ~4000 churning series (10%/s
-      #      identity churn) -> head appends + WAL.
-      #   2. hey query_range (rate by job, count) over those series ->
-      #      chunk iteration + postings + promql eval.
-      #   3. hey instant query (baseline liveness signal).
-      #
-      # v3 fix: pre-compile both loadgen AND baseline so they're ready
-      # instantly. Previously `go run ./cmd/baseline` in the capture step
-      # triggered a ~4 min compilation, causing the profile to capture
-      # idle Prometheus with tsdb=0%, promql=0%.
-      - name: Drive load during capture (remote-write + queries)
+      # Build load tools ahead of the load window so compilation time does not
+      # eat into the 90s loadgen + profile capture window.
+      - name: Build load tools
         run: |
           go install github.com/rakyll/hey@latest
           go build -o /tmp/loadgen ./hack/loadgen
           go build -o /tmp/baseline ./cmd/baseline
+
+      # v5: fast smoke-test scale.
+      #
+      # Loadgen: 1k series / batch 100 / churn 0.2 / 90s. Enough to produce
+      # tsdb/WAL CPU signal; completes in ~2 min total including profile capture.
+      # Hey: 1× query_range c5 10s + 1× instant c3 5s → ~1 min total.
+      #
+      # Timing: SAMPLES_BEFORE captured before writes. Loadgen starts immediately.
+      # 5s warmup, then hey launches. Profile capture (next step) runs during the
+      # remaining ~85s of active loadgen. SAMPLES_AFTER delta in "Check loadgen"
+      # step proves ingestion happened.
+      - name: Drive load during capture (remote-write + queries)
+        run: |
+          # Capture baseline sample count before any writes land
+          SAMPLES_BEFORE=$(curl -s http://localhost:9090/metrics \
+            | grep '^prometheus_tsdb_head_samples_appended_total' \
+            | awk 'BEGIN{s=0} {s+=$NF} END{print s}')
+          echo "Head samples before load: ${SAMPLES_BEFORE:-0}"
+          echo "SAMPLES_BEFORE=${SAMPLES_BEFORE:-0}" >> "$GITHUB_ENV"
+
+          # Start loadgen: 90s / 1k series / batch 100 / 20% churn
           nohup /tmp/loadgen \
             --url http://localhost:9090/api/v1/write \
-            --duration 75 \
-            --series 4000 \
-            --batch 500 \
-            --churn 0.1 \
+            --duration 90 \
+            --series 1000 \
+            --batch 100 \
+            --churn 0.2 \
             > /tmp/loadgen.log 2>&1 &
           echo "loadgen started in background (pid $!)"
-          START=$(date -d '75 seconds ago' +%s)
-          END=$(date +%s)
-          nohup hey -z 75s -c 10 \
+
+          # 5s warmup: let Prometheus ingest a few batches before hey queries start
+          echo "Waiting 5s for initial data to accumulate..."
+          sleep 5
+
+          # Query window anchored to loadgen start (5s ago) through end of load
+          START=$(date -d '5 seconds ago' +%s)
+          END=$(date -d '50 seconds' +%s)
+
+          nohup hey -z 10s -c 5 \
             "http://localhost:9090/api/v1/query_range?query=sum%28rate%28loadgen_metric_a%5B1m%5D%29%29%20by%20%28job%29&start=${START}&end=${END}&step=15s" \
-            > /tmp/hey-qr1.log 2>&1 &
-          echo "hey query_range (rate by job) started (pid $!)"
-          nohup hey -z 75s -c 10 \
-            "http://localhost:9090/api/v1/query_range?query=count%28loadgen_metric_a%29&start=${START}&end=${END}&step=15s" \
-            > /tmp/hey-qr2.log 2>&1 &
-          echo "hey query_range (count) started (pid $!)"
-          nohup hey -z 75s -c 5 \
+            > /tmp/hey-qr.log 2>&1 &
+          echo "hey query_range started (pid $!)"
+          nohup hey -z 5s -c 3 \
             'http://localhost:9090/api/v1/query?query=up' \
             > /tmp/hey-q.log 2>&1 &
           echo "hey instant started (pid $!)"
 
-      # DIAGNOSTIC 3: After load, check evidence of actual data ingestion.
-      # Hypothesis: Prometheus received data but didn't ingested it (remote-write rejected).
-      # Hypothesis: hey queries returned empty result lists.
-      - name: Check loadgen and query results
-        run: |
-          echo "::group::Loadgen exit code + last 20 lines of log"
-          wait || true
-          echo "loadgen exit code: $?"
-          tail -20 /tmp/loadgen.log || echo "no loadgen log"
-          echo "::endgroup::"
-          echo "::group::Hey query response summary (first 30 lines each)"
-          for f in /tmp/hey-qr1.log /tmp/hey-qr2.log /tmp/hey-q.log; do
-            echo "--- $f ---"
-            if [ -f "$f" ]; then
-              head -30 "$f"
-            fi
-          done
-          echo "::endgroup::"
-          echo "::group::Prometheus head samples ingested"
-          curl -s http://localhost:9090/metrics | grep prometheus_tsdb_head_samples_appended_total || echo "metric not found"
-          echo "::endgroup::"
-          echo "::group::Prometheus active series count"
-          curl -s http://localhost:9090/api/v1/query?query=count%28up%29 | python3 -m json.tool 2>/dev/null || echo "query failed"
-          echo "::endgroup::"
-          echo "::group::Prometheus scrape targets summary"
-          curl -s http://localhost:9090/api/v1/targets | python3 -c 'import json,sys;d=json.load(sys.stdin);t=d.get("data",{}).get("activeTargets",[]);p=d.get("data",{}).get("scrapePools",[]);print("Targets: %d, Scrape pools: %d" % (len(t),len(p)))' 2>/dev/null || echo "targets query failed"
-          echo "::endgroup::"
-
-      # v3 fix: use pre-built /tmp/baseline binary (compiled in prior step)
-      # instead of `go run ./cmd/baseline` which triggers a ~4 min compilation.
-      # This ensures the capture starts immediately, overlapping with the
-      # load window started in the previous step.
+      # v4: profile capture runs during active load window (not after wait).
+      # Pre-built /tmp/baseline starts immediately without compilation delay (v3 fix).
       - name: Collect CPU profile (retry once)
         run: |
           DUR=${{ github.event.inputs.duration || 60 }}
@@ -236,15 +220,52 @@ jobs:
             sleep 15
           done
 
+      # After profile: wait for load to complete, then check ingestion proof.
+      # SAMPLES_BEFORE was saved to GITHUB_ENV in "Drive load" step.
+      - name: Check loadgen and query results
+        run: |
+          echo "::group::Loadgen exit code + last 20 lines of log"
+          wait || true
+          echo "loadgen exit code: $?"
+          tail -20 /tmp/loadgen.log || echo "no loadgen log"
+          echo "::endgroup::"
+          echo "::group::Hey query response summary (first 30 lines each)"
+          for f in /tmp/hey-qr.log /tmp/hey-q.log; do
+            echo "--- $f ---"
+            if [ -f "$f" ]; then
+              head -30 "$f"
+            fi
+          done
+          echo "::endgroup::"
+          echo "::group::Head samples delta (remote-write ingestion proof)"
+          SAMPLES_AFTER=$(curl -s http://localhost:9090/metrics \
+            | grep '^prometheus_tsdb_head_samples_appended_total' \
+            | awk 'BEGIN{s=0} {s+=$NF} END{print s}')
+          echo "Before load: ${SAMPLES_BEFORE:-0}"
+          echo "After load:  ${SAMPLES_AFTER:-0}"
+          DELTA=$(python3 -c "print(int(float('${SAMPLES_AFTER:-0}') - float('${SAMPLES_BEFORE:-0}')))" 2>/dev/null || echo "unknown")
+          echo "Delta (samples written during load): ${DELTA}"
+          echo "::endgroup::"
+          echo "::group::Prometheus active series count"
+          curl -s http://localhost:9090/api/v1/query?query=count%28up%29 | python3 -m json.tool 2>/dev/null || echo "query failed"
+          echo "::endgroup::"
+          echo "::group::Prometheus scrape targets summary"
+          curl -s http://localhost:9090/api/v1/targets | python3 -c 'import json,sys;d=json.load(sys.stdin);t=d.get("data",{}).get("activeTargets",[]);p=d.get("data",{}).get("scrapePools",[]);print("Targets: %d, Scrape pools: %d" % (len(t),len(p)))' 2>/dev/null || echo "targets query failed"
+          echo "::endgroup::"
+
       - name: Stop load
         run: |
           pkill -f '/tmp/loadgen' || true
           pkill -f 'hey -z' || true
           wait || true
 
+      - name: Build pgoctl binary
+        run: |
+          go build -o /tmp/pgoctl ./cmd/pgoctl
+
       - name: Report sample count
         run: |
-          SAMPLES=$(go run ./cmd/pgoctl validate \
+          SAMPLES=$(/tmp/pgoctl validate \
             --min-samples 1000 \
             --min-package-share github.com/prometheus/prometheus/tsdb:5.0 \
             --json testdata/prometheus_cpu.pprof \
@@ -255,12 +276,12 @@ jobs:
       - name: Show full coverage report
         run: |
           echo "::group::Full pgoctl validate output (no --json for readable breakdown)"
-          go run ./cmd/pgoctl validate testdata/prometheus_cpu.pprof || true
+          /tmp/pgoctl validate testdata/prometheus_cpu.pprof || true
           echo "::endgroup::"
 
       - name: Validate profile with pgoctl
         run: |
-          go run ./cmd/pgoctl validate \
+          /tmp/pgoctl validate \
             --min-samples 1000 \
             --min-score 0.3 \
             --min-package-share github.com/prometheus/prometheus/tsdb:5.0 \

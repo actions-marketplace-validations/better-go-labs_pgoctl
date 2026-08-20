@@ -18,7 +18,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.0.1-wip"
+var (
+	version = "0.0.1-wip"
+	commit  = "none"
+	date    = "unknown"
+)
 
 var jsonOutput bool
 
@@ -26,7 +30,7 @@ func main() {
 	root := &cobra.Command{
 		Use:           "pgoctl",
 		Short:         "PGO profile management for Go applications",
-		Version:       version,
+		Version:       fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -37,7 +41,7 @@ func main() {
 	root.AddCommand(newExplainCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(3)
+		os.Exit(2)
 	}
 }
 
@@ -157,10 +161,10 @@ func newValidateCmd() *cobra.Command {
 				RichnessFactor:     richnessFactor,
 				PackageShareGates:  gates,
 			}
-			report, err := validate.ValidateFile(args[0], opts)
+			report, err := validate.ValidateFile(args[0], opts) //nolint:gosec
 			if err != nil {
 				if jsonOutput {
-					json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
+					_ = json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
 				} else {
 					fmt.Fprintf(os.Stderr, "error: %s\n", err)
 				}
@@ -201,7 +205,7 @@ func newMergeCmd() *cobra.Command {
 		Use:   "merge <profile...>",
 		Short: "Merge validated CPU profiles into a default.pgo artifact",
 		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			opts := merge.Options{
 				Strategy:      merge.Strategy(strategy),
 				RecencyWeight: recencyWeight,
@@ -211,7 +215,7 @@ func newMergeCmd() *cobra.Command {
 
 			inputs := make([]merge.Input, len(args))
 			for i, path := range args {
-				data, err := os.ReadFile(path)
+				data, err := os.ReadFile(path) //nolint:gosec
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error: read %s: %s\n", path, err)
 					os.Exit(2)
@@ -235,12 +239,12 @@ func newMergeCmd() *cobra.Command {
 			if out == "-" {
 				dst = os.Stdout
 			} else {
-				f, err := os.Create(out)
+				f, err := os.Create(out) //nolint:gosec
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error: create %s: %s\n", out, err)
 					os.Exit(2)
 				}
-				defer f.Close()
+				defer func() { _ = f.Close() }()
 				dst = f
 			}
 			if _, err := dst.Write(buf.Bytes()); err != nil {
@@ -273,18 +277,24 @@ func newCompareCmd() *cobra.Command {
 		Short: "Compare two CPU profiles and emit a gate verdict",
 		Long: `Compare two pprof files by CPU function attribution.
 
-SummaryCPUDelta = sum over all functions of: basePct * (basePct-candPct)/100
-Positive delta = candidate uses less CPU overall.
+delta_pct (per function) = (cand - base) / base * 100   [relative %% change]
+  base = 0 → delta_pct = 0  (new function in candidate, no reference)
+  negative = candidate uses less CPU (improvement)
+
+SummaryCPUDelta = weighted average of relative delta_pct over functions
+present in BOTH profiles (weighted by baseline share). Single-profile
+functions are excluded because percentages sum to 100 on both sides, so a
+baseline-share-weighted sum of percentage-point diffs cancels to ~0.
 
 Verdict:
-  promote  — delta >= --min-improvement
-  rollback — delta <= -(--min-regression) (independent regression threshold)
+  promote  — SummaryCPUDelta >= --min-improvement
+  rollback — SummaryCPUDelta <= -(--min-regression)  (independent threshold)
   neutral  — within both thresholds
 
 --min-cpu-percent drops functions whose CPU share is below the given %% in
 BOTH profiles before comparing (default 0 = no filtering).`,
 		Args: cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			gate := compare.GateConfig{
 				MinCPUImprovement: minImprovement,
 				MinCPURegression:  minRegression,
@@ -294,7 +304,7 @@ BOTH profiles before comparing (default 0 = no filtering).`,
 			rpt, err := compare.ProfileFiles(args[0], args[1], gate)
 			if err != nil {
 				if jsonOutput {
-					json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
+					_ = json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
 				} else {
 					fmt.Fprintf(os.Stderr, "error: %s\n", err)
 				}
@@ -303,7 +313,7 @@ BOTH profiles before comparing (default 0 = no filtering).`,
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				enc.Encode(rpt)
+				_ = enc.Encode(rpt)
 			} else {
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				fmt.Fprintf(w, "verdict\t%s\n", rpt.Verdict)
@@ -320,7 +330,7 @@ BOTH profiles before comparing (default 0 = no filtering).`,
 							d.Function, d.BasePct, d.CandPct, d.DeltaPct)
 					}
 				}
-				w.Flush()
+				_ = w.Flush()
 			}
 			if rpt.Verdict == compare.Rollback {
 				os.Exit(1)
@@ -328,8 +338,8 @@ BOTH profiles before comparing (default 0 = no filtering).`,
 			return nil
 		},
 	}
-	cmd.Flags().Float64Var(&minImprovement, "min-improvement", 3.0, "min CPU delta %% to promote")
-	cmd.Flags().Float64Var(&minRegression, "min-regression", 3.0, "min CPU regression %% to rollback (independent of --min-improvement)")
+	cmd.Flags().Float64Var(&minImprovement, "min-improvement", 10.0, "min relative CPU %% improvement to promote")
+	cmd.Flags().Float64Var(&minRegression, "min-regression", 10.0, "min relative CPU %% regression to rollback (independent of --min-improvement)")
 	cmd.Flags().Float64Var(&minCPUPercent, "min-cpu-percent", 0.0, "drop functions below this CPU %% share in both profiles (0 = no filtering)")
 	cmd.Flags().IntVar(&topN, "top", 10, "number of function deltas to show")
 	return cmd
@@ -339,7 +349,7 @@ func printQualityReport(report *profiletypes.QualityReport, jsonOutput bool) {
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(report)
+		_ = enc.Encode(report)
 	} else {
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(w, "valid\t%v\n", report.Valid)
@@ -355,6 +365,6 @@ func printQualityReport(report *profiletypes.QualityReport, jsonOutput bool) {
 		for _, wn := range report.Warnings {
 			fmt.Fprintf(w, "warning\t%s\n", wn)
 		}
-		w.Flush()
+		_ = w.Flush()
 	}
 }

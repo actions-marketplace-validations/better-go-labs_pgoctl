@@ -184,6 +184,33 @@ func TestValidateFile_PackageShareGate_SubpackageAggregation(t *testing.T) {
 	assert.Equal(t, 50.0, report.PackageShares["github.com/prometheus/prometheus/tsdb"])
 }
 
+// TestComputePackageShares_MultiFrameStack guards against attributing CPU to
+// the root frame instead of the leaf. In pprof, Location[0] is the leaf
+// (innermost executing function); Location[N-1] is the root (e.g. runtime.goexit).
+// A single-location synthetic profile cannot catch this regression.
+func TestComputePackageShares_MultiFrameStack(t *testing.T) {
+	// Build a profile where the leaf is a tsdb function but the root is runtime.
+	// If attribution were reversed, tsdb would appear as 0% and runtime as 100%.
+	tsdbFn := &profile.Function{ID: 1, Name: "github.com/prometheus/prometheus/tsdb.(*Head).Append"}
+	runtimeFn := &profile.Function{ID: 2, Name: "runtime.goexit"}
+	leafLoc := &profile.Location{ID: 1, Line: []profile.Line{{Function: tsdbFn}}}
+	rootLoc := &profile.Location{ID: 2, Line: []profile.Line{{Function: runtimeFn}}}
+	p := &profile.Profile{
+		SampleType: []*profile.ValueType{{Type: "cpu", Unit: "nanoseconds"}},
+		Function:   []*profile.Function{tsdbFn, runtimeFn},
+		Location:   []*profile.Location{leafLoc, rootLoc},
+		Sample: []*profile.Sample{
+			// Location[0]=leaf (tsdb), Location[1]=root (runtime) — standard pprof order.
+			{Value: []int64{1000}, Location: []*profile.Location{leafLoc, rootLoc}},
+		},
+	}
+	shares, err := computePackageShares(p)
+	require.NoError(t, err)
+	tsdbShare := shares["github.com/prometheus/prometheus/tsdb"]
+	assert.Equal(t, 100.0, tsdbShare, "leaf (tsdb) must own 100%% of a single-sample stack")
+	assert.Equal(t, 0.0, shares["runtime"], "root (runtime) must own 0%% when tsdb is the leaf")
+}
+
 func TestValidateFile_PackageShareGate_NoCPUSampleType(t *testing.T) {
 	p := &profile.Profile{
 		SampleType: []*profile.ValueType{{Type: "alloc_space", Unit: "bytes"}},
@@ -204,7 +231,7 @@ func TestValidateFile_PackageShareGate_NoCPUSampleType(t *testing.T) {
 func TestValidateFile_PackageShareGate_MalformedFile(t *testing.T) {
 	f, err := os.CreateTemp("", "bad*.pprof")
 	require.NoError(t, err)
-	t.Cleanup(func() { os.Remove(f.Name()) })
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
 	_, err = f.WriteString("not a pprof file")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())

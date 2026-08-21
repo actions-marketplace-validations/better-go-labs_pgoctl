@@ -53,26 +53,24 @@ jobs:
       - name: Write Parca scrape config
         run: |
           cat > /tmp/parca-config.yaml <<'EOF'
-          object_storage:
-            bucket:
-              type: FILESYSTEM
-              config:
-                directory: /tmp/parca-data
+object_storage:
+  bucket:
+    type: FILESYSTEM
+    config:
+      directory: /tmp/parca-data
 
-          scrape_configs:
-            - job_name: "pprof-e2e"
-              scrape_interval: 15s
-              profiling_config:
-                pprof_config:
-                  process_cpu:
-                    enabled: true
-              static_configs:
-                - targets: ["localhost:6060"]
-          EOF
+scrape_configs:
+  - job_name: "pprof-e2e"
+    scrape_interval: "15s"
+    static_configs:
+      - targets: ["localhost:6060"]
+EOF
 
       # ── Start Parca ──────────────────────────────────────────────────────────
       - name: Start Parca
         run: |
+          mkdir -p /tmp/parca-data
+          chmod 777 /tmp/parca-data
           docker run -d \
             --name parca \
             --network host \
@@ -126,7 +124,7 @@ jobs:
           /tmp/pgoctl collect \
             --source=parca \
             --parca-addr=http://localhost:7070 \
-            --query='process_cpu:cpu:nanoseconds:cpu:nanoseconds{job="pprof-e2e"}' \
+            --query='process_cpu:cpu:nanoseconds:cpu:nanoseconds:delta{job="pprof-e2e"}' \
             --window=2m \
             --out=/tmp/e2e-collected.pprof
 

@@ -98,14 +98,24 @@ EOF
       - name: Wait for profiles to accumulate (90s = 6 scrapes)
         run: sleep 90
 
-      # ── Diagnostics ──────────────────────────────────────────────────────────
-      - name: "[diag] Parca metrics"
-        run: |
-          curl -sf http://localhost:7070/metrics | grep -iE "parca_(config|target|sample)" || echo "no metrics"
+      # ── Diagnostics (run after the 90s wait) ─────────────────────────────────
+      # Hypothesis 1: if parca_config_last_reload_successful is 0 the scrape
+      # config never loaded and parca_target_samples_total will also be 0.
+      # Hypothesis 2: data is there but under a different profile type name
+      # (scrape mode uses a different naming convention than push/agent mode).
+      # The two steps below tell us exactly which hypothesis is true.
 
-      - name: "[diag] List available profile types in parca"
+      - name: "[diag] parca_config_last_reload_successful + parca_target_samples_total"
         run: |
-          curl -sf "http://localhost:7070/api/profiles/types" | head -c 2000 || echo "ProfileTypes call failed"
+          echo "--- parca_config_last_reload_successful ---"
+          curl -sf http://localhost:7070/metrics | grep "^parca_config_last_reload_successful" || echo "metric not found"
+          echo "--- parca_target_samples_total ---"
+          curl -sf http://localhost:7070/metrics | grep "^parca_target_samples_total" || echo "metric not found"
+
+      - name: "[diag] Full GET /api/profiles/types response"
+        run: |
+          echo "--- GET /api/profiles/types ---"
+          curl -sf "http://localhost:7070/api/profiles/types" | python3 -m json.tool || echo "ProfileTypes call failed or returned non-JSON"
 
       - name: "[diag] List available series in parca"
         run: |

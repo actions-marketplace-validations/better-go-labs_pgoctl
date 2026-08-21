@@ -105,14 +105,20 @@ jobs:
         run: |
           curl -sf http://localhost:7070/metrics | grep -iE "parca_(config|target|sample)" || echo "no metrics"
 
-      - name: "[diag] ProfileTypes"
+      - name: "[diag] List available profile types in parca"
         run: |
-          curl -s --http2-prior-knowledge \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -H "Connect-Protocol-Version: 1" \
-            -d '{}' \
-            "http://localhost:7070/parca.query.v1alpha1.QueryService/ProfileTypes" | head -c 1000 || echo "ProfileTypes failed"
+          curl -sf "http://localhost:7070/profiles/types" | head -c 2000 || echo "ProfileTypes call failed"
+
+      - name: "[diag] List available series in parca"
+        run: |
+          curl -sf "http://localhost:7070/profiles/series?match[]={}" | head -c 2000 || echo "Series call failed"
+
+      - name: "[diag] Confirm profiles ingested"
+        run: |
+          echo "=== parca-agent write metrics (:7071) ==="
+          curl -sf http://localhost:7071/metrics | grep -iE "write|sample|grpc_client_handled_total" | head -20 || true
+          echo "=== ProfileTypes (proves data landed in Parca) ==="
+          curl -sf "http://localhost:7070/profiles/types" && echo
 
       # ── Collect → Validate ───────────────────────────────────────────────────
       - name: Collect from Parca

@@ -1,27 +1,16 @@
 package collect
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
-
-	"golang.org/x/net/http2"
 )
-
-type mergeRequest struct {
-	Start      string `json:"start"`
-	End        string `json:"end"`
-	Query      string `json:"query"`
-	ReportType string `json:"reportType"`
-}
 
 type mergeResponse struct {
 	Pprof   string `json:"pprof"`   // base64-encoded bytes
@@ -30,7 +19,7 @@ type mergeResponse struct {
 }
 
 // CollectFromParca fetches a merged CPU pprof from a Parca server using the
-// Connect/gRPC-JSON MergeProfile endpoint.
+// grpc-gateway REST GET /profiles/query endpoint.
 func CollectFromParca(opts Options) (*Result, error) {
 	end := opts.End
 	if end.IsZero() {
@@ -43,35 +32,29 @@ func CollectFromParca(opts Options) (*Result, error) {
 		timeout = 30 * time.Second
 	}
 
-	reqBody := mergeRequest{
-		Start:      start.UTC().Format(time.RFC3339Nano),
-		End:        end.UTC().Format(time.RFC3339Nano),
-		Query:      opts.Query,
-		ReportType: "REPORT_TYPE_PPROF",
-	}
-	bodyBytes, err := json.Marshal(reqBody)
+	// build GET /profiles/query with merge-mode params
+	u, err := url.Parse(opts.ParcaAddr + "/profiles/query")
 	if err != nil {
-		return nil, fmt.Errorf("collect parca: marshal request: %w", err)
+		return nil, fmt.Errorf("collect parca: parse addr: %w", err)
 	}
+	q := u.Query()
+	q.Set("mode", "MODE_MERGE")
+	q.Set("merge.query", opts.Query)
+	q.Set("merge.start", start.UTC().Format(time.RFC3339Nano))
+	q.Set("merge.end", end.UTC().Format(time.RFC3339Nano))
+	q.Set("report_type", "REPORT_TYPE_PPROF")
+	u.RawQuery = q.Encode()
 
-	url := opts.ParcaAddr + "/parca.query.v1alpha1.QueryService/MergeProfile"
-	h2Transport := &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, network, addr)
-		},
-	}
-	httpClient := &http.Client{Transport: h2Transport, Timeout: timeout}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("collect parca: create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Connect-Protocol-Version", "1")
+	req.Header.Set("Accept", "application/json")
+
+	httpClient := &http.Client{Timeout: timeout}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("collect parca: post %s: %w", url, err)
+		return nil, fmt.Errorf("collect parca: get %s: %w", u.String(), err)
 	}
 	defer resp.Body.Close()
 

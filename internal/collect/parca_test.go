@@ -9,21 +9,14 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
-
-// newH2CServer wraps a handler with H2C so tests match the production transport.
-func newH2CServer(h http.Handler) *httptest.Server {
-	return httptest.NewServer(h2c.NewHandler(h, &http2.Server{}))
-}
 
 func TestCollectFromParca_ConnectProtocolHeader(t *testing.T) {
 	fakeData := []byte("FAKE_PPROF_DATA")
-	var gotContentType, gotConnectVersion string
-	srv := newH2CServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotContentType = r.Header.Get("Content-Type")
-		gotConnectVersion = r.Header.Get("Connect-Protocol-Version")
+	var gotAccept, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+		gotMethod = r.Method
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(mergeResponse{
@@ -42,13 +35,16 @@ func TestCollectFromParca_ConnectProtocolHeader(t *testing.T) {
 	}
 	_, err := CollectFromParca(opts)
 	require.NoError(t, err)
-	require.Equal(t, "application/json", gotContentType)
-	require.Equal(t, "1", gotConnectVersion)
+	require.Equal(t, http.MethodGet, gotMethod)
+	require.Equal(t, "application/json", gotAccept)
 }
 
 func TestCollectFromParca_Success(t *testing.T) {
 	fakeData := []byte("FAKE_PPROF_DATA")
-	srv := newH2CServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "MODE_MERGE", r.URL.Query().Get("mode"))
+		require.NotEmpty(t, r.URL.Query().Get("merge.query"))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(mergeResponse{
@@ -72,7 +68,7 @@ func TestCollectFromParca_Success(t *testing.T) {
 }
 
 func TestCollectFromParca_ServerError(t *testing.T) {
-	srv := newH2CServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte("service unavailable"))
 	}))
@@ -92,7 +88,7 @@ func TestCollectFromParca_ServerError(t *testing.T) {
 }
 
 func TestCollectFromParca_EmptyProfile(t *testing.T) {
-	srv := newH2CServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(mergeResponse{Pprof: ""})

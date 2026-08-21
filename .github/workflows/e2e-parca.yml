@@ -51,20 +51,20 @@ jobs:
 
       # ── Write Parca config ────────────────────────────────────────────────────
       - name: Write Parca scrape config
-        run: |
-          cat > /tmp/parca-config.yaml <<'EOF'
-object_storage:
-  bucket:
-    type: FILESYSTEM
-    config:
-      directory: /tmp/parca-data
+        env:
+          PARCA_CONFIG: |
+            object_storage:
+              bucket:
+                type: FILESYSTEM
+                config:
+                  directory: /tmp/parca-data
 
-scrape_configs:
-  - job_name: "pprof-e2e"
-    scrape_interval: "15s"
-    static_configs:
-      - targets: ["localhost:6060"]
-EOF
+            scrape_configs:
+              - job_name: "pprof-e2e"
+                scrape_interval: "15s"
+                static_configs:
+                  - targets: ["localhost:6060"]
+        run: printf '%s' "$PARCA_CONFIG" > /tmp/parca-config.yaml
 
       # ── Start Parca ──────────────────────────────────────────────────────────
       - name: Start Parca

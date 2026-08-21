@@ -33,7 +33,7 @@ func CollectFromParca(opts Options) (*Result, error) {
 	}
 
 	// build GET /profiles/query with merge-mode params
-	u, err := url.Parse(opts.ParcaAddr + "/profiles/query")
+	u, err := url.Parse(opts.ParcaAddr + "/api/profiles/query")
 	if err != nil {
 		return nil, fmt.Errorf("collect parca: parse addr: %w", err)
 	}

@@ -23,14 +23,65 @@ jobs:
       - name: Build pgoctl
         run: go build -o /tmp/pgoctl ./cmd/pgoctl
 
+      # ── Start a CPU-burning pprof server ─────────────────────────────────────
+      - name: Write and start pprof CPU server
+        run: |
+          cat > /tmp/pprof-cpu.go <<'EOF'
+          package main
+
+          import (
+              "net/http"
+              _ "net/http/pprof"
+              "runtime"
+          )
+
+          func main() {
+              for i := 0; i < runtime.NumCPU(); i++ {
+                  go func() {
+                      x := 0
+                      for { x++ }
+                  }()
+              }
+              http.ListenAndServe(":6060", nil)
+          }
+          EOF
+          go run /tmp/pprof-cpu.go &
+          sleep 3
+          curl -sf http://localhost:6060/debug/pprof/ > /dev/null && echo "pprof server ready"
+
+      # ── Write Parca config ────────────────────────────────────────────────────
+      - name: Write Parca scrape config
+        run: |
+          cat > /tmp/parca-config.yaml <<'EOF'
+          object_storage:
+            bucket:
+              type: FILESYSTEM
+              config:
+                directory: /tmp/parca-data
+
+          scrape_configs:
+            - job_name: "pprof-e2e"
+              scrape_interval: 15s
+              profiling_config:
+                pprof_config:
+                  process_cpu:
+                    enabled: true
+              static_configs:
+                - targets: ["localhost:6060"]
+          EOF
+
       # ── Start Parca ──────────────────────────────────────────────────────────
       - name: Start Parca
         run: |
           docker run -d \
             --name parca \
             --network host \
+            -v /tmp/parca-config.yaml:/parca-config.yaml \
+            -v /tmp/parca-data:/tmp/parca-data \
             ghcr.io/parca-dev/parca:v0.28.0 \
-            /parca --cors-allowed-origins="*"
+            /parca \
+              --config-path=/parca-config.yaml \
+              --cors-allowed-origins="*"
 
       - name: Wait for Parca to be ready
         run: |
@@ -46,99 +97,40 @@ jobs:
             sleep 2
           done
 
-      # ── Seed CPU profiles via parca-agent ────────────────────────────────────
-      # parca-agent profiles the host system using eBPF and pushes to Parca.
-      # Privileged + host PID namespace is required for eBPF on GitHub Actions VMs.
-      - name: Run parca-agent (background)
-        run: |
-          docker run -d \
-            --name parca-agent \
-            --privileged \
-            --pid=host \
-            --network=host \
-            -v /sys:/sys:ro \
-            -v /proc:/proc:ro \
-            ghcr.io/parca-dev/parca-agent:v0.49.0 \
-            --remote-store-address=localhost:7070 \
-            --remote-store-insecure \
-            --node=ci-runner
-
-      # Generate CPU load so parca-agent has something meaningful to profile.
-      # Multiple busy-loop processes ensure samples appear across vCPUs.
-      - name: Generate CPU load (background)
-        run: |
-          for i in 1 2 3 4; do yes > /dev/null & done
-          echo "CPU load generators started (PIDs: $(jobs -p | tr '\n' ' '))"
-
-      - name: Wait for profiles to accumulate (90s)
+      - name: Wait for profiles to accumulate (90s = 6 scrapes)
         run: sleep 90
 
-      - name: Stop CPU load generators
-        run: kill $(pgrep -x yes) 2>/dev/null || true
-
-      # ── Collect → Validate ───────────────────────────────────────────────────
-      - name: "[diag] Check parca ingestion metrics"
+      # ── Diagnostics ──────────────────────────────────────────────────────────
+      - name: "[diag] Parca metrics"
         run: |
-          echo "=== Parca /metrics (profile-related) ==="
-          curl -sf http://localhost:7070/metrics | grep -iE "profile|ingest|sample|series" || echo "no matching metrics"
+          curl -sf http://localhost:7070/metrics | grep -iE "parca_(config|target|sample)" || echo "no metrics"
 
-      - name: "[diag] List available profile types in parca"
+      - name: "[diag] ProfileTypes"
         run: |
-          echo "=== ProfileTypes ==="
-          curl -sf -X POST http://localhost:7070/parca.query.v1alpha1.QueryService/ProfileTypes \
-            -H "Content-Type: application/json" \
-            -H "Connect-Protocol-Version: 1" \
-            -d '{}' | head -c 2000 || echo "ProfileTypes call failed"
-
-      - name: "[diag] List available series in parca"
-        run: |
-          echo "=== Series (label sets) ==="
-          curl -sf -X POST http://localhost:7070/parca.query.v1alpha1.QueryService/Series \
-            -H "Content-Type: application/json" \
-            -H "Connect-Protocol-Version: 1" \
-            -d '{"match":["{}"]}' | head -c 2000 || echo "Series call failed"
-
-      - name: "[diag] Dump parca-agent logs"
-        run: docker logs parca-agent 2>&1 | tail -50 || true
-
-      - name: Probe Parca Connect-JSON endpoint (diagnostic)
-        run: |
-          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          WINDOW_START=$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)
-          echo "=== Probing /parca.query.v1alpha1.QueryService/MergeProfile ==="
-          curl -s -o /tmp/probe-response.txt -D /tmp/probe-headers.txt -w "HTTP_STATUS:%{http_code}" \
+          curl -s --http2-prior-knowledge \
             -X POST \
             -H "Content-Type: application/json" \
             -H "Connect-Protocol-Version: 1" \
-            -d "{\"start\":\"${WINDOW_START}\",\"end\":\"${NOW}\",\"query\":\"process_cpu:cpu:nanoseconds:cpu:nanoseconds{}\",\"reportType\":\"REPORT_TYPE_PPROF\"}" \
-            "http://localhost:7070/parca.query.v1alpha1.QueryService/MergeProfile"
-          echo ""
-          echo "=== Response headers ==="
-          cat /tmp/probe-headers.txt
-          echo "=== Response body (first 300 bytes) ==="
-          head -c 300 /tmp/probe-response.txt
-          echo ""
-          echo "=== Also check Parca /metrics for health ==="
-          curl -sf http://localhost:7070/metrics | grep -E "^parca_" | head -10 || echo "(no parca_ metrics)"
+            -d '{}' \
+            "http://localhost:7070/parca.query.v1alpha1.QueryService/ProfileTypes" | head -c 1000 || echo "ProfileTypes failed"
 
+      # ── Collect → Validate ───────────────────────────────────────────────────
       - name: Collect from Parca
         run: |
           /tmp/pgoctl collect \
             --source=parca \
             --parca-addr=http://localhost:7070 \
-            --query='process_cpu:cpu:nanoseconds:cpu:nanoseconds{}' \
+            --query='process_cpu:cpu:nanoseconds:cpu:nanoseconds{job="pprof-e2e"}' \
             --window=2m \
-            --out=/tmp/e2e-collected.pprof || true
+            --out=/tmp/e2e-collected.pprof
 
-      # Use low thresholds: CI runners have bounded CPU budget and parca-agent
-      # collects at 19 Hz, so 90s yields on the order of hundreds of samples.
       - name: Validate collected profile
         run: |
           /tmp/pgoctl validate \
             --min-samples 1 \
             --min-score 0.0 \
             --min-duration 0 \
-            /tmp/e2e-collected.pprof || true
+            /tmp/e2e-collected.pprof
 
       # ── Artifacts ────────────────────────────────────────────────────────────
       - name: Upload collected profile
@@ -149,6 +141,6 @@ jobs:
           path: /tmp/e2e-collected.pprof
           if-no-files-found: ignore
 
-      - name: Dump parca-agent logs on failure
+      - name: Dump Parca logs on failure
         if: failure()
-        run: docker logs parca-agent || true
+        run: docker logs parca || true

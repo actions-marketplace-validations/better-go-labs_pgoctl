@@ -3,13 +3,17 @@ package collect
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"time"
+
+	"golang.org/x/net/http2"
 )
 
 type mergeRequest struct {
@@ -51,7 +55,14 @@ func CollectFromParca(opts Options) (*Result, error) {
 	}
 
 	url := opts.ParcaAddr + "/parca.query.v1alpha1.QueryService/MergeProfile"
-	httpClient := &http.Client{Timeout: timeout}
+	h2Transport := &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		},
+	}
+	httpClient := &http.Client{Transport: h2Transport, Timeout: timeout}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("collect parca: create request: %w", err)

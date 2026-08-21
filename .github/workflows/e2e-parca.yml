@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.22.x'
           cache: true
 
       - name: Build pgoctl
@@ -99,12 +99,6 @@ EOF
         run: sleep 90
 
       # ── Diagnostics (run after the 90s wait) ─────────────────────────────────
-      # Hypothesis 1: if parca_config_last_reload_successful is 0 the scrape
-      # config never loaded and parca_target_samples_total will also be 0.
-      # Hypothesis 2: data is there but under a different profile type name
-      # (scrape mode uses a different naming convention than push/agent mode).
-      # The two steps below tell us exactly which hypothesis is true.
-
       - name: "[diag] parca_config_last_reload_successful + parca_target_samples_total"
         run: |
           echo "--- parca_config_last_reload_successful ---"
@@ -120,13 +114,6 @@ EOF
       - name: "[diag] List available series in parca"
         run: |
           curl -sf "http://localhost:7070/api/profiles/series?match[]={}" | head -c 2000 || echo "Series call failed"
-
-      - name: "[diag] Confirm profiles ingested"
-        run: |
-          echo "=== parca-agent write metrics (:7071) ==="
-          curl -sf http://localhost:7071/metrics | grep -iE "write|sample|grpc_client_handled_total" | head -20 || true
-          echo "=== ProfileTypes (proves data landed in Parca) ==="
-          curl -sf "http://localhost:7070/api/profiles/types" && echo
 
       # ── Collect → Validate ───────────────────────────────────────────────────
       - name: Collect from Parca

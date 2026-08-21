@@ -31,7 +31,7 @@ func FromPprof(opts Options) (*Result, error) {
 
 	client := &http.Client{Timeout: timeout}
 	start := time.Now()
-	resp, err := client.Get(rawURL)
+	resp, err := client.Get(rawURL) //nolint:gosec // URL is caller-supplied by design (--url flag)
 	if err != nil {
 		return nil, fmt.Errorf("collect pprof: get %s: %w", opts.URL, err)
 	}

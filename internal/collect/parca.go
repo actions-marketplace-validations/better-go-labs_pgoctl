@@ -78,7 +78,12 @@ func CollectFromParca(opts Options) (*Result, error) {
 
 	var mergeResp mergeResponse
 	if err := json.Unmarshal(respBytes, &mergeResp); err != nil {
-		return nil, fmt.Errorf("collect parca: decode response: %w", err)
+		ct := resp.Header.Get("Content-Type")
+		snippet := respBytes
+		if len(snippet) > 500 {
+			snippet = snippet[:500]
+		}
+		return nil, fmt.Errorf("collect parca: decode response (HTTP %d, Content-Type: %q): %w\nResponse body: %s", resp.StatusCode, ct, err, snippet)
 	}
 
 	if mergeResp.Code != "" {

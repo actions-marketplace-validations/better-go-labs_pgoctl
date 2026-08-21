@@ -77,6 +77,26 @@ jobs:
         run: kill $(pgrep -x yes) 2>/dev/null || true
 
       # ── Collect → Validate ───────────────────────────────────────────────────
+      - name: Probe Parca Connect-JSON endpoint (diagnostic)
+        run: |
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          WINDOW_START=$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)
+          echo "=== Probing /parca.query.v1alpha1.QueryService/MergeProfile ==="
+          curl -s -o /tmp/probe-response.txt -D /tmp/probe-headers.txt -w "HTTP_STATUS:%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Connect-Protocol-Version: 1" \
+            -d "{\"start\":\"${WINDOW_START}\",\"end\":\"${NOW}\",\"query\":\"process_cpu:cpu:nanoseconds:cpu:nanoseconds{}\",\"reportType\":\"REPORT_TYPE_PPROF\"}" \
+            "http://localhost:7070/parca.query.v1alpha1.QueryService/MergeProfile"
+          echo ""
+          echo "=== Response headers ==="
+          cat /tmp/probe-headers.txt
+          echo "=== Response body (first 300 bytes) ==="
+          head -c 300 /tmp/probe-response.txt
+          echo ""
+          echo "=== Also check Parca /metrics for health ==="
+          curl -sf http://localhost:7070/metrics | grep -E "^parca_" | head -10 || echo "(no parca_ metrics)"
+
       - name: Collect from Parca
         run: |
           /tmp/pgoctl collect \

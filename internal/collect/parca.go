@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -75,6 +76,8 @@ func CollectFromParca(opts Options) (*Result, error) {
 		}
 		return nil, fmt.Errorf("collect parca: server returned %d: %s", resp.StatusCode, snippet)
 	}
+
+	fmt.Fprintf(os.Stderr, "[parca-diag] MergeProfile raw response (%d bytes): %.500s\n", len(respBytes), respBytes)
 
 	var mergeResp mergeResponse
 	if err := json.Unmarshal(respBytes, &mergeResp); err != nil {

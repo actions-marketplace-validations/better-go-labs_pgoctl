@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 )
 
@@ -56,7 +55,7 @@ func CollectFromParca(opts Options) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("collect parca: get %s: %w", u.String(), err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -70,8 +69,6 @@ func CollectFromParca(opts Options) (*Result, error) {
 		}
 		return nil, fmt.Errorf("collect parca: server returned %d: %s", resp.StatusCode, snippet)
 	}
-
-	fmt.Fprintf(os.Stderr, "[parca-diag] MergeProfile raw response (%d bytes): %.500s\n", len(respBytes), respBytes)
 
 	var mergeResp mergeResponse
 	if err := json.Unmarshal(respBytes, &mergeResp); err != nil {

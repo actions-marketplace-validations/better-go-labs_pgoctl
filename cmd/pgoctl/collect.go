@@ -21,7 +21,7 @@ func newCollectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "collect",
 		Short: "Collect a CPU pprof from a continuous profiling source",
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			if source == "" {
 				return fmt.Errorf("--source is required")
 			}

@@ -1,0 +1,26 @@
+name: Smoke
+
+on:
+  push:
+    branches: [main, "feature/**", "feat/**", "fix/**"]
+  pull_request:
+
+jobs:
+  smoke:
+    name: e2e smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build pgoctl
+        run: go build -o bin/pgoctl ./cmd/pgoctl
+
+      - name: Run smoke test
+        run: PGOCTL=bin/pgoctl ./scripts/smoke.sh

@@ -1,15 +1,13 @@
 # pgoctl
 
 <!-- Badges activate on public launch — CI, Go Report Card, pkg.go.dev, and Latest Release resolve once the repo is public and v0.1.0-alpha is published. -->
-[![CI](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml/badge.svg)](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml)
+[![CI](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Better-Go-Labs/pgoctl)](https://goreportcard.com/report/github.com/Better-Go-Labs/pgoctl)
 [![pkg.go.dev](https://pkg.go.dev/badge/github.com/Better-Go-Labs/pgoctl.svg)](https://pkg.go.dev/github.com/Better-Go-Labs/pgoctl)
 [![Go 1.26+](https://img.shields.io/badge/go-1.26+-blue.svg)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/better-go-labs/pgoctl)](https://github.com/better-go-labs/pgoctl/releases/latest)
 [![Smoke](https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml/badge.svg)](https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml)
-
-> Continuous PGO and profile-guided optimization for Go workloads on Kubernetes.
 
 `pgoctl` is a CLI application that turns Go profiles into optimized builds with measurable CPU and latency gains.
 

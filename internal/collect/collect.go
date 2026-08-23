@@ -1,3 +1,4 @@
+// Package collect provides functions to collect CPU profiles from continuous profiling backends.
 package collect
 
 import "time"
@@ -5,6 +6,7 @@ import "time"
 // Source identifies the profiling backend to collect from.
 type Source string
 
+// Supported profile source backends.
 const (
 	SourceParca Source = "parca"
 	SourcePprof Source = "pprof"

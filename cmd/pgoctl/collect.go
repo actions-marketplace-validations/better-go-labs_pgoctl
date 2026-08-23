@@ -21,7 +21,7 @@ func newCollectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "collect",
 		Short: "Collect a CPU pprof from a continuous profiling source",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			if source == "" {
 				return fmt.Errorf("--source is required")
 			}
@@ -44,12 +44,12 @@ func newCollectCmd() *cobra.Command {
 				if query == "" {
 					return fmt.Errorf("--query is required when source=parca")
 				}
-				result, err = collect.CollectFromParca(opts)
+				result, err = collect.FromParca(opts)
 			case collect.SourcePprof:
 				if url == "" {
 					return fmt.Errorf("--url is required when source=pprof")
 				}
-				result, err = collect.CollectFromPprof(opts)
+				result, err = collect.FromPprof(opts)
 			default:
 				return fmt.Errorf("unsupported source %q: supported sources are parca, pprof", source)
 			}

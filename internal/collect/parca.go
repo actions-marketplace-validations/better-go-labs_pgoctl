@@ -17,9 +17,9 @@ type mergeResponse struct {
 	Message string `json:"message"` // present on error
 }
 
-// CollectFromParca fetches a merged CPU pprof from a Parca server using the
+// FromParca fetches a merged CPU pprof from a Parca server using the
 // grpc-gateway REST GET /profiles/query endpoint.
-func CollectFromParca(opts Options) (*Result, error) {
+func FromParca(opts Options) (*Result, error) {
 	end := opts.End
 	if end.IsZero() {
 		end = time.Now()

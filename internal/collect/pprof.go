@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-// CollectFromPprof fetches a CPU profile from a standard Go pprof HTTP endpoint.
+// FromPprof fetches a CPU profile from a standard Go pprof HTTP endpoint.
 // opts.URL must be the full URL including query params (e.g. /debug/pprof/profile?seconds=30).
-func CollectFromPprof(opts Options) (*Result, error) {
+func FromPprof(opts Options) (*Result, error) {
 	timeout := opts.Timeout
 	if timeout == 0 {
 		timeout = 120 * time.Second
@@ -35,7 +35,7 @@ func CollectFromPprof(opts Options) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("collect pprof: get %s: %w", opts.URL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("collect pprof: server returned %d", resp.StatusCode)
 	}

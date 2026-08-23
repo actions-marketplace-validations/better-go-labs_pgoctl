@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCollectFromParca_ConnectProtocolHeader(t *testing.T) {
+func TestFromParca_ConnectProtocolHeader(t *testing.T) {
 	fakeData := []byte("FAKE_PPROF_DATA")
 	var gotAccept, gotMethod string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,13 +33,13 @@ func TestCollectFromParca_ConnectProtocolHeader(t *testing.T) {
 		End:       time.Now(),
 		Timeout:   5 * time.Second,
 	}
-	_, err := CollectFromParca(opts)
+	_, err := FromParca(opts)
 	require.NoError(t, err)
 	require.Equal(t, http.MethodGet, gotMethod)
 	require.Equal(t, "application/json", gotAccept)
 }
 
-func TestCollectFromParca_Success(t *testing.T) {
+func TestFromParca_Success(t *testing.T) {
 	fakeData := []byte("FAKE_PPROF_DATA")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodGet, r.Method)
@@ -61,13 +61,13 @@ func TestCollectFromParca_Success(t *testing.T) {
 		End:       time.Now(),
 		Timeout:   5 * time.Second,
 	}
-	result, err := CollectFromParca(opts)
+	result, err := FromParca(opts)
 	require.NoError(t, err)
 	require.Equal(t, fakeData, result.Bytes)
 	require.Equal(t, len(result.Bytes), result.SizeBytes)
 }
 
-func TestCollectFromParca_ServerError(t *testing.T) {
+func TestFromParca_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte("service unavailable"))
@@ -82,12 +82,12 @@ func TestCollectFromParca_ServerError(t *testing.T) {
 		End:       time.Now(),
 		Timeout:   5 * time.Second,
 	}
-	_, err := CollectFromParca(opts)
+	_, err := FromParca(opts)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "503")
 }
 
-func TestCollectFromParca_EmptyProfile(t *testing.T) {
+func TestFromParca_EmptyProfile(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -103,7 +103,7 @@ func TestCollectFromParca_EmptyProfile(t *testing.T) {
 		End:       time.Now(),
 		Timeout:   5 * time.Second,
 	}
-	_, err := CollectFromParca(opts)
+	_, err := FromParca(opts)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty profile")
 }

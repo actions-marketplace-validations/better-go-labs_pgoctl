@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCollectFromPprof_Success(t *testing.T) {
+func TestFromPprof_Success(t *testing.T) {
 	fakeData := []byte("FAKE_PPROF_DATA")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(fakeData)
 	}))
@@ -22,7 +22,7 @@ func TestCollectFromPprof_Success(t *testing.T) {
 		URL:     srv.URL + "/debug/pprof/profile",
 		Timeout: 5 * time.Second,
 	}
-	result, err := CollectFromPprof(opts)
+	result, err := FromPprof(opts)
 	require.NoError(t, err)
 	require.Equal(t, fakeData, result.Bytes)
 	require.Equal(t, len(result.Bytes), result.SizeBytes)
@@ -32,8 +32,8 @@ func TestCollectFromPprof_Success(t *testing.T) {
 	}
 }
 
-func TestCollectFromPprof_ServerError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestFromPprof_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("internal server error"))
 	}))
@@ -44,12 +44,12 @@ func TestCollectFromPprof_ServerError(t *testing.T) {
 		URL:     srv.URL + "/debug/pprof/profile",
 		Timeout: 5 * time.Second,
 	}
-	_, err := CollectFromPprof(opts)
+	_, err := FromPprof(opts)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "500")
 }
 
-func TestCollectFromPprof_WindowOverride(t *testing.T) {
+func TestFromPprof_WindowOverride(t *testing.T) {
 	var receivedSeconds string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedSeconds = r.URL.Query().Get("seconds")
@@ -61,7 +61,7 @@ func TestCollectFromPprof_WindowOverride(t *testing.T) {
 		URL:    ts.URL + "/debug/pprof/profile",
 		Window: 30 * time.Second,
 	}
-	result, err := CollectFromPprof(opts)
+	result, err := FromPprof(opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,8 +73,8 @@ func TestCollectFromPprof_WindowOverride(t *testing.T) {
 	}
 }
 
-func TestCollectFromPprof_EmptyProfile(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestFromPprof_EmptyProfile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -84,7 +84,7 @@ func TestCollectFromPprof_EmptyProfile(t *testing.T) {
 		URL:     srv.URL + "/debug/pprof/profile",
 		Timeout: 5 * time.Second,
 	}
-	_, err := CollectFromPprof(opts)
+	_, err := FromPprof(opts)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty profile")
 }

@@ -57,7 +57,10 @@ Works with any Go service that imports `net/http/pprof`. No Parca required.
 ```bash
 go build -o bin/pgoctl ./cmd/pgoctl
 
-# Collect a 30s CPU profile
+# Collect via pgoctl (recommended)
+pgoctl collect --source=pprof --url="http://localhost:6060/debug/pprof/profile?seconds=30"
+
+# Or collect manually with curl
 curl -o cpu.pprof "http://localhost:6060/debug/pprof/profile?seconds=30"
 
 # Validate, merge, and build with PGO
@@ -120,16 +123,28 @@ Fetch a CPU profile from a running service. Two backends are supported.
 
 #### Via Go pprof HTTP endpoint
 
-Any Go service with pprof enabled (`import _ "net/http/pprof"`) exposes a raw CPU profile endpoint. Collect directly with curl and feed it into the pipeline:
+Any Go service with pprof enabled (`import _ "net/http/pprof"`) exposes a raw CPU profile endpoint. Use `pgoctl collect` directly, or fall back to curl:
 
 ```bash
-# Capture a 30s CPU profile from any pprof-enabled service
+# Recommended: collect via pgoctl
+pgoctl collect --source=pprof \
+  --url="http://localhost:6060/debug/pprof/profile?seconds=30" \
+  --out=cpu.pprof
+
+# Alternative: collect manually with curl
 curl -o cpu.pprof "http://localhost:6060/debug/pprof/profile?seconds=30"
 
 # Validate and merge as normal
 pgoctl validate cpu.pprof
 pgoctl merge cpu.pprof --out default.pgo
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--source` | _(required)_ | Profiling backend: `parca` or `pprof` |
+| `--url` | _(required when source=pprof)_ | Full URL of the pprof HTTP endpoint |
+| `--out` | `cpu.pprof` | Output file path |
+| `--timeout` | _(source-specific)_ | HTTP request timeout |
 
 The endpoint is `GET /debug/pprof/profile?seconds=<N>`, standard on any Go binary that imports `net/http/pprof`. The standalone `cmd/baseline` collector wraps this for Prometheus (`make collect-baseline`).
 
@@ -145,9 +160,9 @@ pgoctl collect --source=parca \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--source` | `parca` | Profiling backend (`parca`) |
-| `--parca-addr` | _(required)_ | Base URL of the Parca server (e.g. `http://localhost:7070`) |
-| `--query` | _(required)_ | Parca label selector (e.g. `process_cpu:cpu:nanoseconds:cpu:nanoseconds{job="myapp"}`) |
+| `--source` | _(required)_ | Profiling backend: `parca` or `pprof` |
+| `--parca-addr` | _(required when source=parca)_ | Base URL of the Parca server (e.g. `http://localhost:7070`) |
+| `--query` | `process_cpu:cpu:nanoseconds:cpu:nanoseconds:delta` | Parca label selector |
 | `--window` | `5m` | Time window for the merged profile (e.g. `5m`, `1h`) |
 | `--out` | `cpu.pprof` | Output path (`-` for stdout) |
 
@@ -327,7 +342,7 @@ cmd/
   pgoctl/     -- CLI entry point (validate/merge/compare/explain/collect)
   baseline/   -- standalone pprof collector for dev/baseline capture
 internal/
-  collect/    -- Parca HTTP adapter and source interface
+  collect/    -- pprof and Parca HTTP adapters, source interface
   compare/    -- profile comparison and gate logic
   explain/    -- flat CPU attribution, package grouping, PGO verdict
   merge/      -- weighted profile merge strategies

@@ -14,15 +14,38 @@
 ## Pipeline
 
 ```mermaid
-flowchart LR
-    A[Go Service] -->|pprof / Parca| B[collect]
-    B --> C[validate]
-    C --> D[merge]
-    D --> E[default.pgo]
-    E --> F[go build -pgo]
-    F --> G[Optimized Binary]
-    G --> H[compare]
-    H -->|promote / rollback| I{Gate}
+flowchart TD
+    subgraph src ["Input Sources"]
+        P1[pprof endpoint]
+        P2[Parca server]
+        P3[pre-collected .pprof]
+    end
+
+    subgraph pipe ["pgoctl Pipeline"]
+        COL[collect]
+        VAL[validate]
+        MRG[merge]
+        PGO[default.pgo]
+        BLD["go build -pgo"]
+    end
+
+    subgraph gate ["Gate"]
+        CMP[compare]
+        VRD{verdict}
+    end
+
+    P1 -->|--source=pprof| COL
+    P2 -->|--source=parca| COL
+    P3 --> VAL
+    COL --> VAL
+    VAL --> MRG
+    MRG --> PGO
+    PGO --> BLD
+    BLD --> CMP
+    CMP --> VRD
+    VRD -->|promote| SHIP[ship optimized binary]
+    VRD -->|neutral| PASS[pass through]
+    VRD -->|rollback| REJECT[reject build]
 ```
 
 ## Contents

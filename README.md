@@ -2,7 +2,7 @@
 
 <!-- Badges activate on public launch — CI, Go Report Card, pkg.go.dev, and Latest Release resolve once the repo is public and v0.1.0-alpha is published. -->
 [![CI](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Better-Go-Labs/pgoctl)](https://goreportcard.com/report/github.com/Better-Go-Labs/pgoctl)
+[![golangci-lint](https://github.com/better-go-labs/pgoctl/actions/workflows/golangci-lint.yml/badge.svg)](https://github.com/better-go-labs/pgoctl/actions/workflows/golangci-lint.yml)
 [![pkg.go.dev](https://pkg.go.dev/badge/github.com/Better-Go-Labs/pgoctl.svg)](https://pkg.go.dev/github.com/Better-Go-Labs/pgoctl)
 [![Go 1.26+](https://img.shields.io/badge/go-1.26+-blue.svg)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)

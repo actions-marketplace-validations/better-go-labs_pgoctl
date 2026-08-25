@@ -69,7 +69,7 @@ func newCollectCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&source, "source", "", "profile source (required): parca | pprof")
 	cmd.Flags().StringVar(&parcaAddr, "parca-addr", "http://localhost:7070", "Parca server address")
-	cmd.Flags().StringVar(&query, "query", "", "Parca profile selector (required when source=parca)")
+	cmd.Flags().StringVar(&query, "query", "process_cpu:cpu:nanoseconds:cpu:nanoseconds:delta", "Parca profile selector (required when source=parca)")
 	cmd.Flags().StringVar(&url, "url", "", "full URL for pprof HTTP endpoint (required when source=pprof)")
 	cmd.Flags().DurationVar(&window, "window", 5*time.Minute, "lookback window duration")
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "HTTP request timeout (default: source-specific)")

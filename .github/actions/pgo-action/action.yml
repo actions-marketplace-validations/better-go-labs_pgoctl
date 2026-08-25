@@ -54,6 +54,14 @@ inputs:
     description: 'pgoctl version to install (default: latest in PATH or built from source)'
     required: false
     default: 'latest'
+  previous-profile:
+    description: 'Path to a previous default.pgo to merge with (steady-state). Overrides restore-previous-artifact if set.'
+    required: false
+    default: ''
+  restore-previous-artifact:
+    description: 'Auto-download the most recent successful artifact of this name and use it as the previous profile.'
+    required: false
+    default: 'false'
 
 outputs:
   verdict:
@@ -72,7 +80,7 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    # ── install pgoctl ────────────────────────────────────────────────
+    # ── install pgoctl ───────────────────────────────────────────────────
     - name: Install pgoctl
       shell: bash
       run: |
@@ -85,7 +93,7 @@ runs:
           echo "$RUNNER_TOOL_CACHE" >> "$GITHUB_PATH"
         fi
 
-    # ── collect or copy profile ─────────────────────────────────────
+    # ── collect or copy profile ───────────────────────────────────────
     - name: Collect profile
       id: collect
       shell: bash
@@ -112,7 +120,7 @@ runs:
         fi
         echo "profile=cpu.pprof" >> "$GITHUB_OUTPUT"
 
-    # ── validate ─────────────────────────────────────────────────────
+    # ── validate ─────────────────────────────────────────────────────────
     - name: Validate profile
       id: validate
       shell: bash
@@ -131,15 +139,45 @@ runs:
           exit $exit_code
         fi
 
-    # ── merge → default.pgo ────────────────────────────────────────────
+    # ── restore previous artifact (for steady-state accumulation) ────
+    - name: Restore previous artifact
+      id: restore-artifact
+      if: inputs.restore-previous-artifact == 'true' && inputs.previous-profile == ''
+      uses: dawidd6/action-download-artifact@v6
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: previous
+        workflow_conclusion: success
+        if_no_artifact_found: warn
+
+    - name: Resolve previous profile path
+      id: restore
+      shell: bash
+      run: |
+        if [[ -n "${{ inputs.previous-profile }}" ]]; then
+          echo "has-previous=true" >> "$GITHUB_OUTPUT"
+          echo "prev-path=${{ inputs.previous-profile }}" >> "$GITHUB_OUTPUT"
+        elif [[ -f "previous/default.pgo" ]]; then
+          echo "has-previous=true" >> "$GITHUB_OUTPUT"
+          echo "prev-path=previous/default.pgo" >> "$GITHUB_OUTPUT"
+        else
+          echo "has-previous=false" >> "$GITHUB_OUTPUT"
+          echo "prev-path=" >> "$GITHUB_OUTPUT"
+        fi
+
+    # ── merge → default.pgo ───────────────────────────────────────────────
     - name: Merge profiles
       id: merge
       shell: bash
       run: |
-        pgoctl merge cpu.pprof --out=default.pgo
+        if [[ "${{ steps.restore.outputs.has-previous }}" == "true" ]]; then
+          pgoctl merge cpu.pprof "${{ steps.restore.outputs.prev-path }}" --out=default.pgo
+        else
+          pgoctl merge cpu.pprof --out=default.pgo
+        fi
         echo "artifact=default.pgo" >> "$GITHUB_OUTPUT"
 
-    # ── resolve output paths ──────────────────────────────────────────
+    # ── resolve output paths ──────────────────────────────────────────────────
     - name: Set output paths
       id: paths
       shell: bash
@@ -147,18 +185,22 @@ runs:
         echo "profile=$(pwd)/cpu.pprof" >> "$GITHUB_OUTPUT"
         echo "artifact=$(pwd)/default.pgo" >> "$GITHUB_OUTPUT"
 
-    # ── compare against baseline (optional) ────────────────────────────
+    # ── compare against baseline (optional) ──────────────────────────────────
     - name: Compare profiles
       id: compare
-      if: inputs.baseline-profile != ''
+      if: inputs.baseline-profile != '' || steps.restore.outputs.has-previous == 'true'
       shell: bash
       run: |
+        BASELINE="${{ inputs.baseline-profile }}"
+        if [[ -z "$BASELINE" ]]; then
+          BASELINE="${{ steps.restore.outputs.prev-path }}"
+        fi
         set +e
         out=$(pgoctl compare \
           --min-improvement="${{ inputs.min-improvement }}" \
           --min-regression="${{ inputs.min-regression }}" \
           --json \
-          "${{ inputs.baseline-profile }}" cpu.pprof 2>&1)
+          "$BASELINE" cpu.pprof 2>&1)
         exit_code=$?
         echo "$out"
         verdict=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('verdict',''))" 2>/dev/null || echo "")
@@ -171,7 +213,7 @@ runs:
           exit $exit_code
         fi
 
-    # ── upload artifact ─────────────────────────────────────────────────
+    # ── upload artifact ─────────────────────────────────────────────────────
     - name: Upload PGO artifact
       if: inputs.upload-artifact == 'true'
       uses: actions/upload-artifact@v4
@@ -182,14 +224,14 @@ runs:
           default.pgo
         retention-days: 30
 
-    # ── comment on PR ─────────────────────────────────────────────────────
+    # ── comment on PR ────────────────────────────────────────────────────────────
     - name: Comment on PR
       if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request'
       uses: actions/github-script@v7
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          const verdict  = '${{ steps.compare.outputs.verdict }}' || 'n/a (no baseline)';
+          const verdict  = '${{ steps.compare.outputs.verdict }}' || (${{ steps.restore.outputs.has-previous }} ? 'n/a (bootstrap — first run)' : 'n/a (no baseline)');
           const delta    = '${{ steps.compare.outputs.delta }}' || '';
           const score    = '${{ steps.validate.outputs.score }}';
           const valid    = '${{ steps.validate.outputs.valid }}';

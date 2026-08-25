@@ -289,6 +289,11 @@ Exit codes: **0** = promote or neutral, **1** = rollback, **2** = input error.
 | `upload-artifact` | Whether to upload the artifact (default: `true`) |
 | `comment-on-pr` | Whether to post a verdict comment (default: `true`) |
 | `github-token` | Token used to post the PR comment |
+| `restore-previous-artifact` | Auto-download the most recent successful artifact for steady-state profile accumulation (requires `permissions: actions: read`; default: `false`) |
+| `previous-profile` | Path to a previous `default.pgo` to merge with — overrides `restore-previous-artifact` if set |
+
+> **Note:** To enable progressive profile accumulation across runs, set `restore-previous-artifact: true` in your workflow.
+> The calling workflow must have `permissions: actions: read` for cross-run artifact download.
 
 ### Outputs
 

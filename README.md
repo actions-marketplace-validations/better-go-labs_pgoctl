@@ -89,12 +89,21 @@ PARCA_URL=http://localhost:7070 ./demo.sh
 > The Action is currently in this repo and used internally. Once the repo is public it will be
 > referenceable as `better-go-labs/pgoctl/.github/actions/pgo-action@v0.1.0`.
 
-From a pprof endpoint (no Parca needed):
+From a pre-collected pprof file (skips collect):
 
 ```yaml
 - uses: ./.github/actions/pgo-action
   with:
     profile-file: cpu.pprof      # pre-collected pprof; skips the collect step
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+From a live pprof endpoint:
+
+```yaml
+- uses: ./.github/actions/pgo-action
+  with:
+    pprof-url: http://localhost:6060
     github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -264,6 +273,7 @@ Exit codes: **0** = promote or neutral, **1** = rollback, **2** = input error.
 | Input | Description |
 |-------|-------------|
 | `parca-url` | Parca server URL (collect step; omit if using `profile-file`) |
+| `pprof-url` | Go pprof HTTP endpoint base URL (e.g. `http://localhost:6060`; collect step; omit if using `profile-file` or `parca-url`) |
 | `profile-file` | Path to a pre-collected pprof file (skips collect) |
 | `baseline-profile` | Baseline pprof for the compare step |
 | `duration` | Collection duration |
@@ -293,7 +303,7 @@ docker build -t pgoctl .
 docker run --rm pgoctl --help
 ```
 
-Builder stage: `golang:1.23-alpine`, `CGO_ENABLED=0`, `-trimpath -ldflags="-s -w"`. Runtime stage: `gcr.io/distroless/static-debian12:nonroot`.
+Builder stage: `golang:1.26-alpine`, `CGO_ENABLED=0`, `-trimpath -ldflags="-s -w"`. Runtime stage: `gcr.io/distroless/static-debian12:nonroot`.
 
 ## Configuration
 

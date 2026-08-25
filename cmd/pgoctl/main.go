@@ -38,6 +38,7 @@ func main() {
 	root.AddCommand(newValidateCmd())
 	root.AddCommand(newMergeCmd())
 	root.AddCommand(newCompareCmd())
+	root.AddCommand(newCollectCmd())
 	root.AddCommand(newExplainCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

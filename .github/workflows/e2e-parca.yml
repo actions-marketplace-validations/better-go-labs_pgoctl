@@ -1,0 +1,145 @@
+name: e2e / parca-collect
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Build pgoctl
+        run: go build -o /tmp/pgoctl ./cmd/pgoctl
+
+      # ── Start a CPU-burning pprof server ─────────────────────────────────────
+      - name: Write and start pprof CPU server
+        run: |
+          cat > /tmp/pprof-cpu.go <<'EOF'
+          package main
+
+          import (
+              "net/http"
+              _ "net/http/pprof"
+              "runtime"
+          )
+
+          func main() {
+              for i := 0; i < runtime.NumCPU(); i++ {
+                  go func() {
+                      x := 0
+                      for { x++ }
+                  }()
+              }
+              http.ListenAndServe(":6060", nil)
+          }
+          EOF
+          go run /tmp/pprof-cpu.go &
+          sleep 3
+          curl -sf http://localhost:6060/debug/pprof/ > /dev/null && echo "pprof server ready"
+
+      # ── Write Parca config ────────────────────────────────────────────────────
+      - name: Write Parca scrape config
+        env:
+          PARCA_CONFIG: |
+            object_storage:
+              bucket:
+                type: FILESYSTEM
+                config:
+                  directory: /tmp/parca-data
+
+            scrape_configs:
+              - job_name: "pprof-e2e"
+                scrape_interval: "15s"
+                static_configs:
+                  - targets: ["localhost:6060"]
+        run: printf '%s' "$PARCA_CONFIG" > /tmp/parca-config.yaml
+
+      # ── Start Parca ──────────────────────────────────────────────────────────
+      - name: Start Parca
+        run: |
+          mkdir -p /tmp/parca-data
+          chmod 777 /tmp/parca-data
+          docker run -d \
+            --name parca \
+            --network host \
+            -v /tmp/parca-config.yaml:/parca-config.yaml \
+            -v /tmp/parca-data:/tmp/parca-data \
+            ghcr.io/parca-dev/parca:v0.28.0 \
+            /parca \
+              --config-path=/parca-config.yaml \
+              --cors-allowed-origins="*"
+
+      - name: Wait for Parca to be ready
+        run: |
+          echo "Waiting for Parca on :7070..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:7070/metrics >/dev/null 2>&1; then
+              echo "Parca ready after $((i * 2))s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Parca did not become ready"; exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Wait for profiles to accumulate (90s = 6 scrapes)
+        run: sleep 90
+
+      # ── Diagnostics (run after the 90s wait) ─────────────────────────────────
+      - name: "[diag] parca_config_last_reload_successful + parca_target_samples_total"
+        run: |
+          echo "--- parca_config_last_reload_successful ---"
+          curl -sf http://localhost:7070/metrics | grep "^parca_config_last_reload_successful" || echo "metric not found"
+          echo "--- parca_target_samples_total ---"
+          curl -sf http://localhost:7070/metrics | grep "^parca_target_samples_total" || echo "metric not found"
+
+      - name: "[diag] Full GET /api/profiles/types response"
+        run: |
+          echo "--- GET /api/profiles/types ---"
+          curl -sf "http://localhost:7070/api/profiles/types" | python3 -m json.tool || echo "ProfileTypes call failed or returned non-JSON"
+
+      - name: "[diag] List available series in parca"
+        run: |
+          curl -sf "http://localhost:7070/api/profiles/series?match[]={}" | head -c 2000 || echo "Series call failed"
+
+      # ── Collect → Validate ───────────────────────────────────────────────────
+      - name: Collect from Parca
+        run: |
+          /tmp/pgoctl collect \
+            --source=parca \
+            --parca-addr=http://localhost:7070 \
+            --query='process_cpu:cpu:nanoseconds:cpu:nanoseconds:delta{job="pprof-e2e"}' \
+            --window=2m \
+            --out=/tmp/e2e-collected.pprof
+
+      - name: Validate collected profile
+        run: |
+          /tmp/pgoctl validate \
+            --min-samples 1 \
+            --min-score 0.0 \
+            --min-duration 0 \
+            /tmp/e2e-collected.pprof
+
+      # ── Artifacts ────────────────────────────────────────────────────────────
+      - name: Upload collected profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parca-e2e-profile
+          path: /tmp/e2e-collected.pprof
+          if-no-files-found: ignore
+
+      - name: Dump Parca logs on failure
+        if: failure()
+        run: docker logs parca || true

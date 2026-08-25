@@ -1,0 +1,111 @@
+name: e2e / pprof-collect
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Build pgoctl
+        run: go build -o /tmp/pgoctl ./cmd/pgoctl
+
+      # ── Start pprof HTTP server ───────────────────────────────────────────────
+      # A small Go program that imports net/http/pprof, spins up CPU workers,
+      # and exposes the standard /debug/pprof endpoint on :6060.
+      - name: Write pprof test server
+        run: |
+          cat > /tmp/pprof-server.go << 'EOF'
+          package main
+
+          import (
+            "net/http"
+            _ "net/http/pprof"
+            "runtime"
+            "time"
+          )
+
+          func main() {
+            // Burn CPU on all vCPUs so the profile has real samples.
+            stop := make(chan struct{})
+            for i := 0; i < runtime.NumCPU(); i++ {
+              go func() {
+                x := uint64(0)
+                for {
+                  select {
+                  case <-stop:
+                    return
+                  default:
+                    x++
+                  }
+                }
+              }()
+            }
+            // Shut down workers and server after 60s to avoid runaway processes.
+            go func() {
+              time.Sleep(60 * time.Second)
+              close(stop)
+            }()
+            http.ListenAndServe(":6060", nil)
+          }
+          EOF
+
+      - name: Start pprof server (background)
+        run: |
+          go run /tmp/pprof-server.go &
+          echo "PPROF_SERVER_PID=$!" >> "$GITHUB_ENV"
+          # Wait for the server to be ready
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:6060/debug/pprof/ >/dev/null 2>&1; then
+              echo "pprof server ready after $((i * 2))s"
+              break
+            fi
+            if [ "$i" -eq 15 ]; then
+              echo "pprof server did not become ready"; exit 1
+            fi
+            sleep 2
+          done
+
+      # ── Collect → Validate ───────────────────────────────────────────────────
+      # Collect a 10-second CPU profile from the running pprof server.
+      - name: Collect from pprof endpoint
+        run: |
+          /tmp/pgoctl collect \
+            --source=pprof \
+            --url=http://localhost:6060/debug/pprof/profile \
+            --window=10s \
+            --out=/tmp/e2e-pprof.pprof
+
+      # The test server burns real CPU, so samples are guaranteed.
+      # min-samples=1, min-score=0.0 to keep the gate meaningful but not brittle.
+      - name: Validate collected profile
+        run: |
+          /tmp/pgoctl validate \
+            --min-samples 1 \
+            --min-score 0.0 \
+            --min-duration 0 \
+            /tmp/e2e-pprof.pprof
+
+      - name: Stop pprof server
+        if: always()
+        run: kill "$PPROF_SERVER_PID" 2>/dev/null || true
+
+      # ── Artifacts ────────────────────────────────────────────────────────────
+      - name: Upload collected profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pprof-e2e-profile
+          path: /tmp/e2e-pprof.pprof
+          if-no-files-found: ignore

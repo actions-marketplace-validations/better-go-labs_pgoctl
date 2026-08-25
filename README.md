@@ -1,13 +1,17 @@
 # pgoctl
 
-<!-- Badges activate on public launch — CI, golangci-lint, pkg.go.dev, and Latest Release resolve once the repo is public and v0.1.0-alpha is published. -->
-[![CI](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml)
-[![golangci-lint](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml)
-[![pkg.go.dev](https://pkg.go.dev/badge/github.com/Better-Go-Labs/pgoctl.svg)](https://pkg.go.dev/github.com/Better-Go-Labs/pgoctl)
-[![Go 1.26+](https://img.shields.io/badge/go-1.26+-blue.svg)](https://golang.org/dl/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Latest Release](https://img.shields.io/github/v/release/better-go-labs/pgoctl)](https://github.com/better-go-labs/pgoctl/releases/latest)
-[![Smoke](https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml/badge.svg)](https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml)
+<!-- Badges activate on public launch — pkg.go.dev, Codecov, and Latest Release resolve once the repo is public and v0.1.0-alpha is published. -->
+<p align="center">
+  <a href="https://github.com/better-go-labs/pgoctl/actions/workflows/build.yml"><img src="https://github.com/better-go-labs/pgoctl/actions/workflows/build.yml/badge.svg?branch=main" alt="Build"></a>
+  <a href="https://github.com/better-go-labs/pgoctl/actions/workflows/golangci-lint.yml"><img src="https://github.com/better-go-labs/pgoctl/actions/workflows/golangci-lint.yml/badge.svg?branch=main" alt="golangci-lint"></a>
+  <a href="https://github.com/better-go-labs/pgoctl/actions/workflows/vulncheck.yml"><img src="https://github.com/better-go-labs/pgoctl/actions/workflows/vulncheck.yml/badge.svg?branch=main" alt="vulncheck"></a>
+  <a href="https://codecov.io/gh/better-go-labs/pgoctl"><img src="https://codecov.io/gh/better-go-labs/pgoctl/branch/main/graph/badge.svg" alt="codecov"></a>
+  <a href="https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml"><img src="https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml/badge.svg" alt="Smoke"></a>
+  <a href="https://pkg.go.dev/github.com/Better-Go-Labs/pgoctl"><img src="https://pkg.go.dev/badge/github.com/Better-Go-Labs/pgoctl.svg" alt="pkg.go.dev"></a>
+  <a href="https://github.com/better-go-labs/pgoctl/releases/latest"><img src="https://img.shields.io/github/v/release/better-go-labs/pgoctl" alt="Latest Release"></a>
+  <img src="https://img.shields.io/badge/go-1.26+-blue.svg" alt="Go 1.26+">
+  <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License">
+</p>
 
 `pgoctl` is a CLI application that turns Go profiles into optimized builds with measurable CPU and latency gains.
 

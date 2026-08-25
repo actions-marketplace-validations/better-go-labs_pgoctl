@@ -1,6 +1,6 @@
 # pgoctl
 
-<!-- Badges activate on public launch — CI, Go Report Card, pkg.go.dev, and Latest Release resolve once the repo is public and v0.1.0-alpha is published. -->
+<!-- Badges activate on public launch — CI, golangci-lint, pkg.go.dev, and Latest Release resolve once the repo is public and v0.1.0-alpha is published. -->
 [![CI](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml)
 [![golangci-lint](https://github.com/better-go-labs/pgoctl/actions/workflows/golangci-lint.yml/badge.svg)](https://github.com/better-go-labs/pgoctl/actions/workflows/golangci-lint.yml)
 [![pkg.go.dev](https://pkg.go.dev/badge/github.com/Better-Go-Labs/pgoctl.svg)](https://pkg.go.dev/github.com/Better-Go-Labs/pgoctl)

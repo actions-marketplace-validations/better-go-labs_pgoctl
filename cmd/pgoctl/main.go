@@ -317,17 +317,17 @@ BOTH profiles before comparing (default 0 = no filtering).`,
 				_ = enc.Encode(rpt)
 			} else {
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintf(w, "verdict\t%s\n", rpt.Verdict)
-				fmt.Fprintf(w, "cpu_delta_pct\t%.2f\n", rpt.SummaryCPUDelta)
-				fmt.Fprintf(w, "baseline_samples\t%d\n", rpt.BaselineSamples)
-				fmt.Fprintf(w, "candidate_samples\t%d\n", rpt.CandidateSamples)
+				_, _ = fmt.Fprintf(w, "verdict\t%s\n", rpt.Verdict)
+				_, _ = fmt.Fprintf(w, "cpu_delta_pct\t%.2f\n", rpt.SummaryCPUDelta)
+				_, _ = fmt.Fprintf(w, "baseline_samples\t%d\n", rpt.BaselineSamples)
+				_, _ = fmt.Fprintf(w, "candidate_samples\t%d\n", rpt.CandidateSamples)
 				if rpt.FilteredFunctions > 0 {
-					fmt.Fprintf(w, "filtered_functions\t%d\n", rpt.FilteredFunctions)
+					_, _ = fmt.Fprintf(w, "filtered_functions\t%d\n", rpt.FilteredFunctions)
 				}
 				if len(rpt.TopDeltas) > 0 {
-					fmt.Fprintf(w, "\nfunction\tbase%%\tcand%%\tdelta%%\n")
+					_, _ = fmt.Fprintf(w, "\nfunction\tbase%%\tcand%%\tdelta%%\n")
 					for _, d := range rpt.TopDeltas {
-						fmt.Fprintf(w, "%s\t%.1f\t%.1f\t%+.1f\n",
+						_, _ = fmt.Fprintf(w, "%s\t%.1f\t%.1f\t%+.1f\n",
 							d.Function, d.BasePct, d.CandPct, d.DeltaPct)
 					}
 				}
@@ -353,18 +353,18 @@ func printQualityReport(report *profiletypes.QualityReport, jsonOutput bool) {
 		_ = enc.Encode(report)
 	} else {
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(w, "valid\t%v\n", report.Valid)
-		fmt.Fprintf(w, "quality_score\t%.3f\n", report.QualityScore)
-		fmt.Fprintf(w, "samples\t%d\n", report.Samples)
-		fmt.Fprintf(w, "unique_stacks\t%d\n", report.UniqueStacks)
+		_, _ = fmt.Fprintf(w, "valid\t%v\n", report.Valid)
+		_, _ = fmt.Fprintf(w, "quality_score\t%.3f\n", report.QualityScore)
+		_, _ = fmt.Fprintf(w, "samples\t%d\n", report.Samples)
+		_, _ = fmt.Fprintf(w, "unique_stacks\t%d\n", report.UniqueStacks)
 		for prefix, share := range report.PackageShares {
-			fmt.Fprintf(w, "package_share\t%s\t%.2f%%\n", prefix, share)
+			_, _ = fmt.Fprintf(w, "package_share\t%s\t%.2f%%\n", prefix, share)
 		}
 		for _, e := range report.Errors {
-			fmt.Fprintf(w, "error\t%s\n", e)
+			_, _ = fmt.Fprintf(w, "error\t%s\n", e)
 		}
 		for _, wn := range report.Warnings {
-			fmt.Fprintf(w, "warning\t%s\n", wn)
+			_, _ = fmt.Fprintf(w, "warning\t%s\n", wn)
 		}
 		_ = w.Flush()
 	}

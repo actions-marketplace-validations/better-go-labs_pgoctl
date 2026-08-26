@@ -1,13 +1,18 @@
 # pgoctl
 
-<!-- Badges activate on public launch — CI, Go Report Card, pkg.go.dev, and Latest Release resolve once the repo is public and v0.1.0-alpha is published. -->
-[![CI](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/better-go-labs/pgoctl/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Better-Go-Labs/pgoctl)](https://goreportcard.com/report/github.com/Better-Go-Labs/pgoctl)
-[![pkg.go.dev](https://pkg.go.dev/badge/github.com/Better-Go-Labs/pgoctl.svg)](https://pkg.go.dev/github.com/Better-Go-Labs/pgoctl)
-[![Go 1.26+](https://img.shields.io/badge/go-1.26+-blue.svg)](https://golang.org/dl/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Latest Release](https://img.shields.io/github/v/release/better-go-labs/pgoctl)](https://github.com/better-go-labs/pgoctl/releases/latest)
-[![Smoke](https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml/badge.svg)](https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml)
+<!-- Badges activate on public launch — pkg.go.dev, Codecov, and Latest Release resolve once the repo is public and v0.1.0-alpha is published. -->
+<p align="center">
+  <a href="https://github.com/better-go-labs/pgoctl/actions/workflows/build.yml"><img src="https://github.com/better-go-labs/pgoctl/actions/workflows/build.yml/badge.svg?branch=main" alt="Build"></a>
+  <a href="https://github.com/better-go-labs/pgoctl/actions/workflows/golangci-lint.yml"><img src="https://github.com/better-go-labs/pgoctl/actions/workflows/golangci-lint.yml/badge.svg?branch=main" alt="golangci-lint"></a>
+  <a href="https://github.com/better-go-labs/pgoctl/actions/workflows/vulncheck.yml"><img src="https://github.com/better-go-labs/pgoctl/actions/workflows/vulncheck.yml/badge.svg?branch=main" alt="vulncheck"></a>
+  <a href="https://codecov.io/gh/better-go-labs/pgoctl"><img src="https://codecov.io/gh/better-go-labs/pgoctl/branch/main/graph/badge.svg" alt="codecov"></a>
+  <br>
+  <a href="https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml"><img src="https://github.com/better-go-labs/pgoctl/actions/workflows/smoke.yml/badge.svg" alt="Smoke"></a>
+  <a href="https://pkg.go.dev/github.com/Better-Go-Labs/pgoctl"><img src="https://pkg.go.dev/badge/github.com/Better-Go-Labs/pgoctl.svg" alt="pkg.go.dev"></a>
+  <a href="https://github.com/better-go-labs/pgoctl/releases/latest"><img src="https://img.shields.io/github/v/release/better-go-labs/pgoctl" alt="Latest Release"></a>
+  <img src="https://img.shields.io/badge/go-1.26+-blue.svg" alt="Go 1.26+">
+  <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License">
+</p>
 
 `pgoctl` is a CLI application that turns Go profiles into optimized builds with measurable CPU and latency gains.
 
@@ -15,14 +20,14 @@
 
 ```mermaid
 flowchart LR
-    A[Go Service] -->|pprof / Parca| B[collect]
-    B --> C[validate]
-    C --> D[merge]
-    D --> E[default.pgo]
-    E --> F[go build -pgo]
-    F --> G[Optimized Binary]
-    G --> H[compare]
-    H -->|promote / rollback| I{Gate}
+    A["Profile Source\n(pprof / Parca / file)"] --> B["pgoctl collect"]
+    B --> C["cpu.pprof"]
+    C --> D["go build -pgo"]
+    D --> E["pgoctl compare"]
+    E --> F{"Verdict"}
+    F -->|improve| G["✅ Promote"]
+    F -->|neutral| H["➡️ Keep"]
+    F -->|regress| I["🔴 Rollback"]
 ```
 
 ## Contents
@@ -57,7 +62,10 @@ Works with any Go service that imports `net/http/pprof`. No Parca required.
 ```bash
 go build -o bin/pgoctl ./cmd/pgoctl
 
-# Collect a 30s CPU profile
+# Collect via pgoctl (recommended)
+pgoctl collect --source=pprof --url="http://localhost:6060/debug/pprof/profile?seconds=30"
+
+# Or collect manually with curl
 curl -o cpu.pprof "http://localhost:6060/debug/pprof/profile?seconds=30"
 
 # Validate, merge, and build with PGO
@@ -86,12 +94,21 @@ PARCA_URL=http://localhost:7070 ./demo.sh
 > The Action is currently in this repo and used internally. Once the repo is public it will be
 > referenceable as `better-go-labs/pgoctl/.github/actions/pgo-action@v0.1.0`.
 
-From a pprof endpoint (no Parca needed):
+From a pre-collected pprof file (skips collect):
 
 ```yaml
 - uses: ./.github/actions/pgo-action
   with:
     profile-file: cpu.pprof      # pre-collected pprof; skips the collect step
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+From a live pprof endpoint:
+
+```yaml
+- uses: ./.github/actions/pgo-action
+  with:
+    pprof-url: http://localhost:6060
     github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -120,16 +137,28 @@ Fetch a CPU profile from a running service. Two backends are supported.
 
 #### Via Go pprof HTTP endpoint
 
-Any Go service with pprof enabled (`import _ "net/http/pprof"`) exposes a raw CPU profile endpoint. Collect directly with curl and feed it into the pipeline:
+Any Go service with pprof enabled (`import _ "net/http/pprof"`) exposes a raw CPU profile endpoint. Use `pgoctl collect` directly, or fall back to curl:
 
 ```bash
-# Capture a 30s CPU profile from any pprof-enabled service
+# Recommended: collect via pgoctl
+pgoctl collect --source=pprof \
+  --url="http://localhost:6060/debug/pprof/profile?seconds=30" \
+  --out=cpu.pprof
+
+# Alternative: collect manually with curl
 curl -o cpu.pprof "http://localhost:6060/debug/pprof/profile?seconds=30"
 
 # Validate and merge as normal
 pgoctl validate cpu.pprof
 pgoctl merge cpu.pprof --out default.pgo
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--source` | _(required)_ | Profiling backend: `parca` or `pprof` |
+| `--url` | _(required when source=pprof)_ | Full URL of the pprof HTTP endpoint |
+| `--out` | `cpu.pprof` | Output file path |
+| `--timeout` | _(source-specific)_ | HTTP request timeout |
 
 The endpoint is `GET /debug/pprof/profile?seconds=<N>`, standard on any Go binary that imports `net/http/pprof`. The standalone `cmd/baseline` collector wraps this for Prometheus (`make collect-baseline`).
 
@@ -145,9 +174,9 @@ pgoctl collect --source=parca \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--source` | `parca` | Profiling backend (`parca`) |
-| `--parca-addr` | _(required)_ | Base URL of the Parca server (e.g. `http://localhost:7070`) |
-| `--query` | _(required)_ | Parca label selector (e.g. `process_cpu:cpu:nanoseconds:cpu:nanoseconds{job="myapp"}`) |
+| `--source` | _(required)_ | Profiling backend: `parca` or `pprof` |
+| `--parca-addr` | _(required when source=parca)_ | Base URL of the Parca server (e.g. `http://localhost:7070`) |
+| `--query` | `process_cpu:cpu:nanoseconds:cpu:nanoseconds:delta` | Parca label selector |
 | `--window` | `5m` | Time window for the merged profile (e.g. `5m`, `1h`) |
 | `--out` | `cpu.pprof` | Output path (`-` for stdout) |
 
@@ -249,6 +278,7 @@ Exit codes: **0** = promote or neutral, **1** = rollback, **2** = input error.
 | Input | Description |
 |-------|-------------|
 | `parca-url` | Parca server URL (collect step; omit if using `profile-file`) |
+| `pprof-url` | Go pprof HTTP endpoint base URL (e.g. `http://localhost:6060`; collect step; omit if using `profile-file` or `parca-url`) |
 | `profile-file` | Path to a pre-collected pprof file (skips collect) |
 | `baseline-profile` | Baseline pprof for the compare step |
 | `duration` | Collection duration |
@@ -259,6 +289,11 @@ Exit codes: **0** = promote or neutral, **1** = rollback, **2** = input error.
 | `upload-artifact` | Whether to upload the artifact (default: `true`) |
 | `comment-on-pr` | Whether to post a verdict comment (default: `true`) |
 | `github-token` | Token used to post the PR comment |
+| `restore-previous-artifact` | Auto-download the most recent successful artifact for steady-state profile accumulation (requires `permissions: actions: read`; default: `false`) |
+| `previous-profile` | Path to a previous `default.pgo` to merge with — overrides `restore-previous-artifact` if set |
+
+> **Note:** To enable progressive profile accumulation across runs, set `restore-previous-artifact: true` in your workflow.
+> The calling workflow must have `permissions: actions: read` for cross-run artifact download.
 
 ### Outputs
 
@@ -278,7 +313,7 @@ docker build -t pgoctl .
 docker run --rm pgoctl --help
 ```
 
-Builder stage: `golang:1.23-alpine`, `CGO_ENABLED=0`, `-trimpath -ldflags="-s -w"`. Runtime stage: `gcr.io/distroless/static-debian12:nonroot`.
+Builder stage: `golang:1.26-alpine`, `CGO_ENABLED=0`, `-trimpath -ldflags="-s -w"`. Runtime stage: `gcr.io/distroless/static-debian12:nonroot`.
 
 ## Configuration
 
@@ -327,7 +362,7 @@ cmd/
   pgoctl/     -- CLI entry point (validate/merge/compare/explain/collect)
   baseline/   -- standalone pprof collector for dev/baseline capture
 internal/
-  collect/    -- Parca HTTP adapter and source interface
+  collect/    -- pprof and Parca HTTP adapters, source interface
   compare/    -- profile comparison and gate logic
   explain/    -- flat CPU attribution, package grouping, PGO verdict
   merge/      -- weighted profile merge strategies

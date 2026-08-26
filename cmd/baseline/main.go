@@ -38,7 +38,7 @@ func main() {
 	log.Printf("collecting %ds CPU profile: %s", *seconds, endpoint)
 
 	client := &http.Client{Timeout: time.Duration(*seconds+30) * time.Second}
-	resp, err := client.Get(endpoint)
+	resp, err := client.Get(endpoint) //nolint:gosec // URL is user-supplied by design (--url flag)
 	if err != nil {
 		log.Fatalf("fetch: %v", err)
 	}

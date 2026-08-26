@@ -125,7 +125,7 @@ func send(client *http.Client, url string, req *prompb.WriteRequest, samples, re
 		*errors++
 		return
 	}
-	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(snappy.Encode(nil, data)))
+	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(snappy.Encode(nil, data))) //nolint:gosec // URL is user-supplied by design (--url flag)
 	if err != nil {
 		log.Printf("new request: %v", err)
 		*errors++

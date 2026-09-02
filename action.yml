@@ -109,7 +109,7 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    # ── install pgoctl ────────────────────────────────────────
+    # ── install pgoctl ────────────────────────────────────
     - name: Install pgoctl
       shell: bash
       run: |
@@ -123,10 +123,11 @@ runs:
             OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
             ARCH="$(uname -m)"
             case "$ARCH" in
-              x86_64) ARCH="x86_64" ;;
+              x86_64) ARCH="amd64" ;;
               aarch64|arm64) ARCH="arm64" ;;
             esac
-            URL="https://github.com/better-go-labs/pgoctl/releases/download/${VERSION}/pgoctl_${OS}_${ARCH}.tar.gz"
+            VERSION_CLEAN="${VERSION#v}"
+            URL="https://github.com/better-go-labs/pgoctl/releases/download/${VERSION}/pgoctl_${VERSION_CLEAN}_${OS}_${ARCH}.tar.gz"
             echo "Downloading pgoctl ${VERSION} from ${URL}"
             if curl -fsSL "$URL" -o /tmp/pgoctl.tar.gz; then
               tar -xzf /tmp/pgoctl.tar.gz -C /tmp pgoctl
@@ -146,7 +147,7 @@ runs:
           fi
         fi
 
-    # ── collect or copy profile ─────────────────────────────────
+    # ── collect or copy profile ──────────────────────────────
     - name: Collect profile
       id: collect
       shell: bash
@@ -174,7 +175,7 @@ runs:
         fi
         echo "profile=cpu.pprof" >> "$GITHUB_OUTPUT"
 
-    # ── validate ─────────────────────────────────────────────────────
+    # ── validate ──────────────────────────────────────────────────────
     - name: Validate profile
       id: validate
       shell: bash
@@ -187,7 +188,7 @@ runs:
         valid=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('valid',False))" 2>/dev/null || echo "False")
         samples=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('samples',0))" 2>/dev/null || echo "0")
         stacks=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('unique_stacks',0))" 2>/dev/null || echo "0")
-        errors=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d.get('errors',[])))\" 2>/dev/null || echo "")
+        errors=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d.get('errors',[])))" 2>/dev/null || echo "")
         echo "score=$score" >> "$GITHUB_OUTPUT"
         echo "valid=$valid" >> "$GITHUB_OUTPUT"
         echo "samples=$samples" >> "$GITHUB_OUTPUT"
@@ -225,7 +226,7 @@ runs:
           echo "prev-path=" >> "$GITHUB_OUTPUT"
         fi
 
-    # ── merge → default.pgo ───────────────────────────────────────────────
+    # ── merge → default.pgo ─────────────────────────────────────────────────
     - name: Merge profiles
       id: merge
       shell: bash
@@ -245,7 +246,7 @@ runs:
         echo "profile=$(pwd)/cpu.pprof" >> "$GITHUB_OUTPUT"
         echo "artifact=$(pwd)/default.pgo" >> "$GITHUB_OUTPUT"
 
-    # ── compare against baseline (optional) ──────────────────────────────────
+    # ── compare against baseline (optional) ──────────────────────────────
     - name: Compare profiles
       id: compare
       if: inputs.baseline-profile != '' || steps.restore.outputs.has-previous == 'true'
@@ -283,7 +284,7 @@ runs:
           exit $exit_code
         fi
 
-    # ── explain profile ────────────────────────────────────────────────────
+    # ── explain profile ─────────────────────────────────────────────────────
     - name: Explain profile
       id: explain
       shell: bash
@@ -308,7 +309,7 @@ runs:
           echo "duration-sec=$duration" >> "$GITHUB_OUTPUT"
         fi
 
-    # ── upload artifact ─────────────────────────────────────────────────
+    # ── upload artifact ─────────────────────────────────────────────────────
     - name: Upload PGO artifact
       if: inputs.upload-artifact == 'true'
       uses: actions/upload-artifact@v7
